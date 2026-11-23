@@ -7,7 +7,6 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from pathlib import Path
 
 from .capture import Segment, StreamRecorder
 from .chat import chat_messages
@@ -33,49 +32,67 @@ class Clip:
 class Engine:
     def __init__(self, settings: Settings):
         self.s = settings
-        self.recorder = StreamRecorder(settings.channel, settings.quality, settings.buffer_dir,
-                                       settings.segment_seconds, settings.buffer_seconds)
-        self.chat = ChatSpikeDetector(settings.chat_window, settings.chat_multiplier,
-                                      settings.chat_min_messages, settings.hype_words)
-        self.audio = AudioPeakDetector(settings.audio_db_above)
-        self.telegram = TelegramSender(settings.telegram_token, settings.telegram_chat_id)
         self.clips: list[Clip] = []
-        self.chat_rate = 0.0
-        self.chat_baseline = 0.0
-        self.last_level: float | None = None
-        self._last_trigger = 0.0
         self._index = settings.clips_dir / "clips.json"
         self._tasks: list[asyncio.Task] = []
+        self.running = False
         self._load()
+        self._build()
+
+    def _build(self) -> None:
+        s = self.s
+        self.recorder = StreamRecorder(s.channel, s.quality, s.buffer_dir,
+                                       s.segment_seconds, s.buffer_seconds)
+        self.chat = ChatSpikeDetector(s.chat_window, s.chat_multiplier,
+                                      s.chat_min_messages, s.hype_words)
+        self.audio = AudioPeakDetector(s.audio_db_above)
+        self.telegram = TelegramSender(s.telegram_token, s.telegram_chat_id)
+        self.chat_rate = 0.0
+        self.chat_baseline = 0.0
+        self.chat_connected = False
+        self.last_level: float | None = None
+        self._last_trigger = 0.0
 
     # ---------- хранение списка клипов ----------
     def _load(self) -> None:
         if self._index.exists():
             self.clips = [Clip(**c) for c in json.loads(self._index.read_text("utf-8"))]
 
-    def _save(self) -> None:
+    def save_index(self) -> None:
         self._index.parent.mkdir(parents=True, exist_ok=True)
         self._index.write_text(json.dumps([asdict(c) for c in self.clips], ensure_ascii=False, indent=1), "utf-8")
 
     # ---------- жизненный цикл ----------
     async def start(self) -> None:
-        if not self.s.channel:
-            raise SystemExit("Укажите TWITCH_CHANNEL в .env")
+        """Запускает слежение за каналом. Без канала просто ждёт настроек."""
+        if not self.s.channel or self.running:
+            return
         if self.s.audio_enabled:
             self.recorder.on_segment(self._on_segment)
         self._tasks = [
             asyncio.create_task(self.recorder.run()),
             asyncio.create_task(self._chat_loop()),
         ]
+        self.running = True
+        log.info("Слежу за каналом %s", self.s.channel)
 
     async def stop(self) -> None:
         for t in self._tasks:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks = []
+        self.running = False
+
+    async def restart(self) -> None:
+        """Применить новые настройки: остановиться, пересобрать детекторы, запуститься."""
+        await self.stop()
+        self._build()
+        await self.start()
 
     # ---------- источники сигналов ----------
     async def _chat_loop(self) -> None:
         async for _nick, text in chat_messages(self.s.channel):
+            self.chat_connected = True
             now = time.time()
             trig = self.chat.add_message(text, now)
             self.chat_rate = self.chat.current_score(now)
@@ -126,13 +143,13 @@ class Engine:
         clip = Clip(id=clip_id, file=out.name, thumb=thumb.name if thumb else None,
                     reason=trig.reason, created=trig.at, duration=round(end - start, 1))
         self.clips.insert(0, clip)
-        self._save()
+        self.save_index()
         log.info("Клип готов: %s", out)
 
         caption = f"🎬 {self.s.channel}: {trig.reason}\n{datetime.fromtimestamp(trig.at):%H:%M:%S}"
         try:
             clip.sent_telegram = await self.telegram.send_video(out, caption)
-            self._save()
+            self.save_index()
         except Exception:
             log.exception("Ошибка отправки в Telegram")
 
@@ -141,9 +158,12 @@ class Engine:
 
     def status(self) -> dict:
         return {
+            "configured": bool(self.s.channel),
             "channel": self.s.channel,
             "live": self.recorder.live,
+            "state": self.recorder.state if self.running else "не настроено",
             "buffer_seconds": round(sum(s.duration for s in self.recorder.segments)),
+            "chat_connected": self.chat_connected,
             "chat_score": round(self.chat_rate, 1),
             "chat_baseline": round(self.chat_baseline, 1),
             "audio_db": self.last_level,

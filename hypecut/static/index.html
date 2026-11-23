@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HypeCut</title>
+<style>
+  :root { --bg:#0e0e10; --card:#18181b; --line:#2a2a2d; --text:#efeff1; --muted:#adadb8; --accent:#9147ff; --live:#eb0400; --ok:#00c26e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:22px; }
+  h2 { margin:0 0 4px; font-size:18px; }
+  .badge { padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; background:#3a3a3d; vertical-align:middle; }
+  .badge.live { background:var(--live); }
+  .stats { display:flex; flex-wrap:wrap; gap:6px 16px; color:var(--muted); font-size:14px; margin-top:6px; }
+  .stats b { color:var(--text); }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:10px 16px; font-size:15px; font-weight:600; cursor:pointer; }
+  button.secondary { background:#3a3a3d; }
+  button:disabled { opacity:.5; cursor:default; }
+  main { padding:16px; display:grid; gap:16px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .clip { background:var(--card); border-radius:8px; overflow:hidden; }
+  .clip video { width:100%; display:block; background:#000; aspect-ratio:16/9; }
+  .clip .meta { padding:10px 12px; display:flex; justify-content:space-between; gap:8px; align-items:center; font-size:14px; }
+  .clip .meta small { color:var(--muted); display:block; }
+  .clip a, .clip .del { color:var(--muted); font-size:13px; background:none; padding:4px; font-weight:400; }
+  .empty { color:var(--muted); padding:32px 16px; }
+  #settings { max-width:640px; margin:16px auto; padding:0 16px; display:none; }
+  .panel { background:var(--card); border-radius:10px; padding:20px; margin-bottom:16px; }
+  .step { color:var(--muted); font-size:14px; margin:0 0 14px; line-height:1.5; }
+  label { display:block; font-size:14px; margin:12px 0 6px; }
+  input[type=text], input[type=number] { width:100%; padding:10px 12px; border-radius:6px; border:1px solid var(--line); background:#0e0e10; color:var(--text); font-size:15px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 12px; }
+  .hint { font-size:13px; color:var(--muted); }
+  .hint.ok { color:var(--ok); }
+  .hint.err { color:#ff6b6b; }
+  details summary { cursor:pointer; color:var(--muted); }
+  a { color:#bf94ff; }
+  #toast { position:fixed; bottom:16px; left:16px; right:16px; max-width:420px; margin:auto; background:#2a2a2d; padding:12px 16px; border-radius:8px; display:none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>HypeCut <span id="live" class="badge">офлайн</span></h1>
+    <div class="stats" id="stats"></div>
+  </div>
+  <div class="actions">
+    <button id="clipBtn">✂️ Клип сейчас</button>
+    <button id="folderBtn" class="secondary">📁 Папка с клипами</button>
+    <button id="settingsBtn" class="secondary">⚙️ Настройки</button>
+  </div>
+</header>
+
+<section id="settings">
+  <div class="panel">
+    <h2>1. Какой стрим смотреть</h2>
+    <p class="step">Вставьте ссылку на канал или просто ник стримера.</p>
+    <input type="text" id="channel" placeholder="https://twitch.tv/ник или ник">
+  </div>
+
+  <div class="panel">
+    <h2>2. Telegram (по желанию)</h2>
+    <p class="step">
+      Чтобы клипы приходили в Telegram:<br>
+      а) откройте <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, отправьте <b>/newbot</b>, придумайте имя и скопируйте токен;<br>
+      б) вставьте токен ниже;<br>
+      в) откройте своего нового бота и отправьте ему любое сообщение;<br>
+      г) нажмите «Найти мой чат».
+    </p>
+    <label for="token">Токен бота</label>
+    <input type="text" id="token" placeholder="123456789:AA...">
+    <div class="row">
+      <button id="findBtn" class="secondary">🔎 Найти мой чат</button>
+      <button id="testBtn" class="secondary">Отправить тест</button>
+    </div>
+    <label for="chatId">Чат</label>
+    <input type="text" id="chatId" placeholder="заполнится само">
+    <div class="hint" id="tgHint"></div>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>Дополнительно: длина клипа и чувствительность</summary>
+      <div class="grid2">
+        <div><label>Секунд до момента</label><input type="number" id="pre_roll" min="5" max="120"></div>
+        <div><label>Секунд после момента</label><input type="number" id="post_roll" min="3" max="60"></div>
+        <div><label>Пауза между клипами, с</label><input type="number" id="cooldown" min="10" max="600"></div>
+        <div><label>Порог чата (во сколько раз)</label><input type="number" id="chat_multiplier" step="0.5" min="1.5" max="10"></div>
+        <div><label>Минимум сообщений за 10 с</label><input type="number" id="chat_min_messages" min="3" max="500"></div>
+        <div><label>Порог звука, dB</label><input type="number" id="audio_db_above" step="1" min="3" max="30"></div>
+      </div>
+      <label>Слова-триггеры (через запятую)</label>
+      <input type="text" id="hype_words">
+      <label><input type="checkbox" id="audio_enabled"> Ловить громкие моменты по звуку</label>
+      <p class="hint">Маленький канал? Уменьшите «Минимум сообщений» до 5–8.</p>
+    </details>
+  </div>
+
+  <div class="row" style="margin-bottom:32px">
+    <button id="saveBtn">💾 Сохранить и начать</button>
+    <button id="cancelBtn" class="secondary">Отмена</button>
+  </div>
+</section>
+
+<main id="clips"></main>
+<div id="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const NUM = ["pre_roll","post_roll","cooldown","chat_multiplier","chat_min_messages","audio_db_above"];
+let known = null;
+
+function toast(text) {
+  const t = $("toast"); t.textContent = text; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 4500);
+}
+async function api(path, body, method) {
+  const r = await fetch(path, { method: method || (body ? "POST" : "GET"),
+    headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Ошибка");
+  return data;
+}
+function hint(text, cls) { $("tgHint").textContent = text; $("tgHint").className = "hint " + (cls || ""); }
+
+async function openSettings() {
+  const s = await api("/api/settings");
+  $("channel").value = s.channel; $("token").value = s.telegram_token; $("chatId").value = s.telegram_chat_id;
+  NUM.forEach(k => $(k).value = s[k]);
+  $("hype_words").value = s.hype_words.join(", ");
+  $("audio_enabled").checked = s.audio_enabled;
+  $("settings").style.display = "block"; $("clips").style.display = "none";
+}
+function closeSettings() { $("settings").style.display = "none"; $("clips").style.display = "grid"; }
+
+$("settingsBtn").onclick = openSettings;
+$("cancelBtn").onclick = closeSettings;
+$("findBtn").onclick = async () => {
+  hint("Ищу…");
+  try {
+    const r = await api("/api/telegram/find-chat", { token: $("token").value });
+    if (r.ok) { $("chatId").value = r.chat_id; hint(`Нашёл: ${r.name}. Нажмите «Отправить тест».`, "ok"); }
+    else hint(r.error, "err");
+  } catch (e) { hint(e.message, "err"); }
+};
+$("testBtn").onclick = async () => {
+  try {
+    const r = await api("/api/telegram/test", { token: $("token").value, chat_id: $("chatId").value });
+    r.ok ? hint("Сообщение отправлено, проверьте Telegram.", "ok") : hint("Telegram: " + r.error, "err");
+  } catch (e) { hint(e.message, "err"); }
+};
+$("saveBtn").onclick = async () => {
+  const body = { channel: $("channel").value, telegram_token: $("token").value, telegram_chat_id: $("chatId").value,
+    hype_words: $("hype_words").value, audio_enabled: $("audio_enabled").checked };
+  NUM.forEach(k => body[k] = $(k).value);
+  try { await api("/api/settings", body); closeSettings(); toast("Сохранено. Слежу за каналом."); loadStatus(); }
+  catch (e) { toast(e.message); }
+};
+$("folderBtn").onclick = () => api("/api/open-folder", {}).catch(e => toast(e.message));
+$("clipBtn").onclick = async () => {
+  try { const b = await api("/api/clip", {}); toast(`Режу клип, будет готов через ~${b.ready_in} с`); }
+  catch (e) { toast(e.message); }
+};
+$("clips").addEventListener("click", async (e) => {
+  const id = e.target.dataset.id;
+  if (!id) return;
+  await api(`/api/clips/${id}`, null, "DELETE");
+  known = null; loadClips();
+});
+
+async function loadStatus() {
+  try {
+    const s = await api("/api/status");
+    $("live").textContent = s.live ? "LIVE" : "офлайн";
+    $("live").className = "badge" + (s.live ? " live" : "");
+    $("stats").innerHTML = s.configured ?
+      `<span>Канал: <b>${s.channel}</b></span>` +
+      `<span>Статус: <b>${s.state}</b></span>` +
+      `<span>Чат: <b>${s.chat_connected ? s.chat_score + " (обычно " + s.chat_baseline + ")" : "подключаюсь"}</b></span>` +
+      `<span>Звук: <b>${s.audio_db ?? "—"} dB</b></span>` +
+      `<span>Telegram: <b>${s.telegram ? "вкл" : "выкл"}</b></span>`
+      : `<span>Сначала укажите канал в настройках</span>`;
+    $("clipBtn").disabled = !s.live;
+    if (!s.configured && $("settings").style.display !== "block") openSettings();
+  } catch (e) {}
+}
+async function loadClips() {
+  const clips = await api("/api/clips");
+  const key = clips.map(c => c.id).join();
+  if (key === known) return;
+  known = key;
+  $("clips").innerHTML = clips.length ? clips.map(c => `
+    <div class="clip">
+      <video controls preload="none" src="/clips/${c.file}" ${c.thumb ? `poster="/clips/${c.thumb}"` : ""}></video>
+      <div class="meta">
+        <div>${c.reason}<small>${new Date(c.created * 1000).toLocaleString()} · ${c.duration} с${c.sent_telegram ? " · ✈️ в Telegram" : ""}</small></div>
+        <div><a href="/clips/${c.file}" download>скачать</a><button class="del" data-id="${c.id}">удалить</button></div>
+      </div>
+    </div>`).join("") : `<div class="empty">Клипов пока нет. Они появятся сами, когда в чате или на звуке будет всплеск. Можно нажать «Клип сейчас».</div>`;
+}
+
+loadStatus(); loadClips();
+setInterval(loadStatus, 2000);
+setInterval(loadClips, 5000);
+</script>
+</body>
+</html>

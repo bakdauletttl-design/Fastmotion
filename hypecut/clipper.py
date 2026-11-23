@@ -2,23 +2,29 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import tempfile
 from pathlib import Path
 
 from .capture import Segment
 from .detector import parse_mean_volume
+from .paths import FFMPEG, NO_WINDOW
+
+
+def _run_sync(args: list[str]) -> tuple[int, str]:
+    p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.PIPE, **NO_WINDOW)
+    return p.returncode, p.stderr.decode(errors="replace")
 
 
 async def _run(*args: str) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-    _, err = await proc.communicate()
-    return proc.returncode or 0, err.decode(errors="replace")
+    # обычный subprocess в потоке: так работает с любым event loop, в том числе на Windows
+    return await asyncio.to_thread(_run_sync, [FFMPEG, *args])
 
 
 async def mean_volume(path: Path) -> float | None:
     """Средняя громкость куска в dB (через фильтр volumedetect)."""
-    _, err = await _run("ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
+    _, err = await _run("-hide_banner", "-nostats", "-i", str(path),
                         "-vn", "-af", "volumedetect", "-f", "null", "-")
     return parse_mean_volume(err)
 
@@ -31,13 +37,14 @@ async def build_clip(segments: list[Segment], start: float, end: float, out: Pat
     offset = max(0.0, start - segments[0].start)
     duration = end - max(start, segments[0].start)
 
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
         for s in segments:
-            f.write(f"file '{s.path.resolve()}'\n")
+            p = s.path.resolve().as_posix().replace("'", r"'\''")
+            f.write(f"file '{p}'\n")
         list_path = Path(f.name)
     try:
         code, err = await _run(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-hide_banner", "-loglevel", "error", "-y",
             "-f", "concat", "-safe", "0", "-i", str(list_path),
             "-ss", f"{offset:.2f}", "-t", f"{duration:.2f}",
             "-c", "copy", "-movflags", "+faststart", str(out))
@@ -49,7 +56,7 @@ async def build_clip(segments: list[Segment], start: float, end: float, out: Pat
 
 
 async def make_thumbnail(video: Path, out: Path) -> Path | None:
-    code, _ = await _run("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+    code, _ = await _run("-hide_banner", "-loglevel", "error", "-y",
                          "-ss", "1", "-i", str(video), "-frames:v", "1",
                          "-vf", "scale=480:-2", str(out))
     return out if code == 0 and out.exists() else None
