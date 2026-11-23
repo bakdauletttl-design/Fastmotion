@@ -12,6 +12,7 @@ from .bot import Bot
 from .config import Config
 from .db import DB
 from .telegram_api import TelegramAPI
+from .push import Push
 from .worker import Dispatcher, Manager
 
 log = logging.getLogger("hypecut_cloud")
@@ -26,7 +27,7 @@ async def main() -> None:
     cfg.clips_dir.mkdir(parents=True, exist_ok=True)
     db = DB(cfg.db_path)
     api = TelegramAPI(cfg.bot_token) if cfg.bot_token else None
-    dispatcher = Dispatcher(cfg, db, api)
+    dispatcher = Dispatcher(cfg, db, api, Push(db))
     manager = Manager(cfg, db, dispatcher)
     app = create_app(cfg, db, on_change=manager.poke, status=manager.status)
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")),

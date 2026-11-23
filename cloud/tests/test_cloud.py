@@ -317,3 +317,33 @@ def test_enhance_titles_subtitles_and_vertical(tmp_path, monkeypatch):
                                 "stream=width,height", "-of", "csv=p=0", str(out)],
                                capture_output=True, text=True).stdout.strip()
         assert probe == "1080,1920"
+
+
+def test_push_tokens_live_announce_and_clip_push(env):
+    import httpx
+    from hypecut_cloud.push import Push
+
+    cfg, db, tg = env
+    sent = []
+
+    def handler(request):
+        msgs = __import__("json").loads(request.content)
+        sent.extend(msgs)
+        return httpx.Response(200, json={"data": [
+            {"status": "error", "details": {"error": "DeviceNotRegistered"}} if "dead" in m["to"] else {"status": "ok"}
+            for m in msgs]})
+
+    push = Push(db, httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    client = TestClient(create_app(cfg, db))
+    tok = client.post("/auth/dev", json={"name": "a"}).json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    assert client.post("/push/token", json={"token": "bad"}, headers=h).status_code == 400
+    for t in ("ExponentPushToken[ok1]", "ExponentPushToken[dead]"):
+        assert client.post("/push/token", json={"token": t}, headers=h).json()["ok"]
+    uid = client.get("/me", headers=h).json()["id"]
+    db.follow(uid, "twitch:streamer")
+
+    d = Dispatcher(cfg, db, tg, push)
+    assert asyncio.run(d.announce_live("twitch:streamer")) == 1
+    assert len(sent) == 2 and "в эфире" in sent[0]["title"]
+    assert db.push_tokens([uid]) == ["ExponentPushToken[ok1]"]  # мёртвый токен удалён

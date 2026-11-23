@@ -45,6 +45,7 @@ export type Clip = {
   moment: number | null;
   messages: string[];
   reason: string;
+  title: string | null;
   kind: string;
   created: number;
   duration: number;
@@ -102,6 +103,7 @@ export const api = {
   removeChannel: (key: string) => call<Channel[]>("DELETE", `/channels/${encodeURIComponent(key)}`),
   clips: () => call<Clip[]>("GET", "/clips"),
   plans: () => call<Plan[]>("GET", "/plans"),
+  pushToken: (token: string) => call<{ ok: boolean }>("POST", "/push/token", { token }),
 };
 
 // Файлы клипов открываются по ссылке, поэтому токен передаётся в адресе

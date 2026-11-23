@@ -31,6 +31,10 @@ class DevIn(BaseModel):
     name: str = "tester"
 
 
+class PushIn(BaseModel):
+    token: str
+
+
 class ChannelIn(BaseModel):
     channel: str
     platform: str | None = None  # для ника без ссылки: twitch | youtube | kick | vk | tiktok
@@ -124,6 +128,18 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     @app.get("/me")
     def me(user=Depends(current_user)):
         return me_dict(user)
+
+    @app.post("/push/token")
+    def push_token(body: PushIn, user=Depends(current_user)):
+        if not body.token.startswith(("ExponentPushToken[", "ExpoPushToken[")):
+            raise HTTPException(400, "Неверный токен уведомлений")
+        db.add_push_token(user["id"], body.token)
+        return {"ok": True}
+
+    @app.delete("/push/token")
+    def push_token_off(body: PushIn, user=Depends(current_user)):
+        db.remove_push_token(body.token)
+        return {"ok": True}
 
     @app.delete("/me")
     def delete_me(user=Depends(current_user)):

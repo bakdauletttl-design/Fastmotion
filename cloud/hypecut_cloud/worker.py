@@ -72,8 +72,23 @@ def _ytdlp_url(url: str) -> str | None:
 class Dispatcher:
     """Рассылает готовый клип подписчикам канала с учётом их тарифа."""
 
-    def __init__(self, cfg: Config, db: DB, api: TelegramAPI | None):
-        self.cfg, self.db, self.api = cfg, db, api
+    def __init__(self, cfg: Config, db: DB, api: TelegramAPI | None, push=None):
+        self.cfg, self.db, self.api, self.push = cfg, db, api, push
+
+    async def announce_live(self, channel: str) -> int:
+        """Сообщает подписчикам, что стример вышел в эфир."""
+        src = from_key(channel)
+        name = src.name.lstrip("@")
+        users = [u for u in self.db.followers(channel) if self.db.plan_of(u)]
+        if self.api:
+            for u in users:
+                if u["telegram_chat_id"]:
+                    await self.api.send_message(u["telegram_chat_id"],
+                                                f"🔴 {name} в эфире на {src.title}. Ловлю лучшие моменты.")
+        if self.push:
+            await self.push.send([u["id"] for u in users], f"🔴 {name} в эфире",
+                                 f"{src.title}: HypeCut уже смотрит стрим и пришлёт клипы", {"channel": channel})
+        return len(users)
 
     def needs_vertical(self, channel: str) -> bool:
         for u in self.db.followers(channel):
@@ -90,7 +105,7 @@ class Dispatcher:
         head = f"🔥 {clip['title']}\n" if clip["title"] else ""
         caption = (f"{head}HypeCut · {src.name.lstrip('@')} ({src.title})\n{clip['reason']} · "
                    f"{datetime.fromtimestamp(clip['created']):%H:%M}\n{src.public()['url']}")
-        sent = 0
+        got: list[int] = []
         for user in self.db.followers(clip["channel"]):
             plan = self.db.plan_of(user)
             if not can_receive(plan, self.db.received_in_stream(user["id"], clip["stream_id"])):
@@ -107,8 +122,11 @@ class Dispatcher:
                     self.db.set_clip(clip_id, **{col: fid})
             # клип в приложении виден в любом случае, даже если Telegram не ответил
             self.db.add_delivery(clip_id, user["id"], clip["stream_id"], ok)
-            sent += 1
-        return sent
+            got.append(user["id"])
+        if self.push and got:
+            await self.push.send(got, f"🔥 {src.name.lstrip('@')}", clip["title"] or clip["reason"],
+                                 {"clip": clip_id})
+        return len(got)
 
 
 class ChannelWorker:
@@ -122,6 +140,7 @@ class ChannelWorker:
         self.chat = ChatSpikeDetector(cfg.chat_window, cfg.chat_multiplier, cfg.chat_min_messages, cfg.hype_words)
         self.audio = AudioPeakDetector(cfg.audio_db_above)
         self._last = 0.0
+        self._announced: str | None = None
         self._tasks: list[asyncio.Task] = []
         self._pending: set[asyncio.Task] = set()
         self.messages: deque[tuple[float, str, str]] = deque(maxlen=2000)
@@ -163,6 +182,12 @@ class ChannelWorker:
                 await stream.aclose()
 
     async def _on_segment(self, seg) -> None:
+        if self._announced != self.stream_id:
+            self._announced = self.stream_id
+            try:
+                await self.dispatcher.announce_live(self.channel)
+            except Exception:
+                log.exception("Не удалось сообщить об эфире %s", self.channel)
         level = await mean_volume(seg.path)
         if level is None:
             return

@@ -55,6 +55,13 @@
           "imageWidth": 160,
           "backgroundColor": "#07080A"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2EE59D",
+          "defaultChannel": "clips"
+        }
       ]
     ],
     "scheme": "hypecut",

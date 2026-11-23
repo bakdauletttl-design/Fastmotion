@@ -74,6 +74,11 @@ CREATE TABLE IF NOT EXISTS payments (
     charge_id TEXT,                  -- id платежа в Telegram, нужен для возврата
     created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS push_tokens (
+    token TEXT PRIMARY KEY,          -- Expo push token телефона
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS follows_channel ON follows(channel);
 CREATE INDEX IF NOT EXISTS deliveries_user ON deliveries(user_id, created);
 """
@@ -143,6 +148,19 @@ class DB:
 
     def delete_user(self, uid: int) -> None:
         self.x("DELETE FROM users WHERE id=?", (uid,))
+
+    # ---------- пуш-уведомления ----------
+    def add_push_token(self, uid: int, token: str) -> None:
+        self.x("INSERT OR REPLACE INTO push_tokens VALUES (?,?,?)", (token, uid, time.time()))
+
+    def remove_push_token(self, token: str) -> None:
+        self.x("DELETE FROM push_tokens WHERE token=?", (token,))
+
+    def push_tokens(self, uids: list[int]) -> list[str]:
+        if not uids:
+            return []
+        marks = ",".join("?" * len(uids))
+        return [r["token"] for r in self.q(f"SELECT token FROM push_tokens WHERE user_id IN ({marks})", tuple(uids))]
 
     # ---------- привязка Telegram ----------
     def new_link_token(self, uid: int, ttl: float = 3600) -> str:

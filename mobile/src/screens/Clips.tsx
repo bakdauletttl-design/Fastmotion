@@ -54,8 +54,8 @@ function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
     <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: 60, paddingHorizontal: 20, paddingBottom: 40 }}>
       <View style={[s.row, { marginBottom: 14 }]}>
         <View style={{ flex: 1 }}>
-          <P style={{ fontWeight: "700", fontSize: 17 }}>{clip.channel}</P>
-          <P dim style={{ fontSize: 13 }}>{clip.platform_title} · {clip.reason}</P>
+          <P style={{ fontWeight: "700", fontSize: 17 }} numberOfLines={2}>{clip.title ?? clip.channel}</P>
+          <P dim style={{ fontSize: 13 }}>{clip.title ? `${clip.channel} · ` : ""}{clip.platform_title} · {clip.reason}</P>
         </View>
         <Button title="Закрыть" kind="text" onPress={onClose} />
       </View>
@@ -154,9 +154,9 @@ export default function Clips() {
                 <P style={{ fontSize: 12, fontWeight: "700" }}>{time(item.duration)}</P>
               </View>
             </View>
-            <P style={{ fontWeight: "700", marginTop: 8 }} numberOfLines={1}>{item.channel}</P>
-            <P dim style={{ fontSize: 13 }}>
-              {item.platform_title} ·{" "}
+            <P style={{ fontWeight: "700", marginTop: 8 }} numberOfLines={2}>{item.title ?? item.channel}</P>
+            <P dim style={{ fontSize: 13 }} numberOfLines={1}>
+              {item.title ? `${item.channel} · ` : `${item.platform_title} · `}
               {new Date(item.created * 1000).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
             </P>
           </Pressable>

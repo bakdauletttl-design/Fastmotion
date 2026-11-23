@@ -2,6 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, SafeAreaView, Text, View } from "react-native";
 import { api, loadToken, Me, setToken } from "./src/api";
+import { onNotificationTap, registerPush } from "./src/push";
 import Account from "./src/screens/Account";
 import Channels from "./src/screens/Channels";
 import Clips from "./src/screens/Clips";
@@ -37,6 +38,12 @@ export default function App() {
       setLoading(false);
     })();
   }, []);
+
+  // уведомления включаем, когда человек вошёл
+  useEffect(() => {
+    if (me) registerPush();
+  }, [me?.id]);
+  useEffect(() => onNotificationTap((data) => setTab(data.channel && !data.clip ? "channels" : "clips")), []);
 
   let body: React.ReactNode;
   if (loading) {
