@@ -1,0 +1,79 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller pytest
+
+      - name: Download ffmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-dl
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Get-ChildItem ffmpeg-dl -Recurse -Filter ffmpeg.exe | Select-Object -First 1 | Copy-Item -Destination bin\ffmpeg.exe
+          # ffprobe нужен только тестам, в exe не попадает
+          Get-ChildItem ffmpeg-dl -Recurse -Filter ffprobe.exe | Select-Object -First 1 | Copy-Item -Destination bin\ffprobe.exe
+          "$PWD\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: Build HypeCut.exe
+        run: >
+          pyinstaller --noconfirm --onefile --name HypeCut
+          --add-binary "bin/ffmpeg.exe;."
+          --add-data "hypecut/static;hypecut/static"
+          --collect-all streamlink
+          --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto
+          --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets.auto
+          --hidden-import uvicorn.lifespan.on
+          run_hypecut.py
+
+      - name: Self-test the exe
+        shell: pwsh
+        run: |
+          .\dist\HypeCut.exe --selftest
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $p = Start-Process .\dist\HypeCut.exe -PassThru
+          Start-Sleep 10
+          $s = Invoke-RestMethod http://localhost:8000/api/status
+          Stop-Process $p.Id
+          if ($s.configured -ne $false) { exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HypeCut-windows
+          path: dist/HypeCut.exe
+
+      - name: Publish release
+        # каждый пуш в main (например, после мержа PR) публикует новую версию
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.${{ github.run_number }}
+          name: HypeCut 0.1.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: dist/HypeCut.exe
+          body: |
+            **HypeCut для Windows.** Скачайте `HypeCut.exe`, положите в любую папку и запустите двойным щелчком.
+            Откроется браузер с настройками: вставьте ссылку на Twitch-канал и нажмите «Сохранить и начать».

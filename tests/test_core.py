@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from fastmotion.capture import Segment
-from fastmotion.chat import parse_privmsg
-from fastmotion.clipper import build_clip, mean_volume
-from fastmotion.detector import AudioPeakDetector, ChatSpikeDetector, parse_mean_volume
+from hypecut.capture import Segment
+from hypecut.chat import parse_privmsg
+from hypecut.clipper import build_clip, mean_volume
+from hypecut.detector import AudioPeakDetector, ChatSpikeDetector, parse_mean_volume
 
 
 def test_chat_spike_fires_on_burst_only():
@@ -90,12 +90,76 @@ def test_segment_and_clip_with_ffmpeg(tmp_path: Path):
 
 def test_web_endpoints(tmp_path: Path):
     from fastapi.testclient import TestClient
-    from fastmotion.config import Settings
-    from fastmotion.web import create_app
+    from hypecut.config import Settings
+    from hypecut.web import create_app
 
-    s = Settings(channel="test", data_dir=tmp_path)
+    s = Settings(data_dir=tmp_path)
     client = TestClient(create_app(s, run_engine=False))
     assert client.get("/").status_code == 200
-    assert client.get("/api/status").json()["live"] is False
+    st = client.get("/api/status").json()
+    assert st["configured"] is False and st["live"] is False
     assert client.get("/api/clips").json() == []
     assert client.post("/api/clip").status_code == 409
+    assert client.post("/api/settings", json={"channel": ""}).status_code == 400
+
+    r = client.post("/api/settings", json={"channel": "https://www.twitch.tv/SomeStreamer",
+                                           "pre_roll": "25", "audio_enabled": False, "hype_words": "kekw, pog"})
+    assert r.status_code == 200
+    saved = client.get("/api/settings").json()
+    assert saved["channel"] == "somestreamer" and saved["pre_roll"] == 25 and saved["hype_words"] == ["kekw", "pog"]
+    # кнопки «Стоп» и «Telegram: выкл»
+    st = client.post("/api/toggle", json={"active": False, "telegram_enabled": False}).json()
+    assert st["active"] is False and st["telegram_enabled"] is False and st["state"] == "остановлено"
+    st = client.post("/api/toggle", json={"active": True}).json()
+    assert st["active"] is True and st["telegram_enabled"] is False
+    # настройки переживают перезапуск
+    assert Settings(data_dir=tmp_path).__class__  # noqa
+    s2 = Settings(data_dir=tmp_path); s2.load_saved()
+    assert s2.channel == "somestreamer" and s2.audio_enabled is False and s2.telegram_enabled is False
+
+
+def test_recorder_and_engine_end_to_end(tmp_path: Path):
+    """Подменяем Twitch тестовым видео в реальном времени и проверяем запись + нарезку."""
+    from hypecut.config import Settings
+    from hypecut.engine import Engine
+    from hypecut.detector import Trigger
+
+    def fake_open(self):
+        p = subprocess.Popen([
+            "ffmpeg", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=30",
+            "-f", "lavfi", "-i", "sine=frequency=440", "-t", "30", "-c:v", "libx264", "-preset", "ultrafast",
+            "-g", "30", "-c:a", "aac", "-f", "mpegts", "pipe:1"], stdout=subprocess.PIPE)
+        return p.stdout
+
+    async def scenario():
+        s = Settings(channel="sim", data_dir=tmp_path, pre_roll=6, post_roll=3, segment_seconds=2)
+        e = Engine(s)
+        e.recorder.open_stream = fake_open.__get__(e.recorder)
+        e.recorder.on_segment(e._on_segment)
+        task = asyncio.create_task(e.recorder.run())
+        await asyncio.sleep(10)
+        assert e.recorder.live and e.last_level is not None
+        assert e.fire(Trigger(time.time(), "тест", 1))
+        await asyncio.sleep(7)
+        task.cancel()
+        return e
+
+    e = asyncio.run(scenario())
+    assert len(e.clips) == 1
+    c = e.clips[0]
+    assert (tmp_path / "clips" / c.file).stat().st_size > 10_000
+    # о моменте сохранено, когда и почему он вырезан
+    assert c.kind == "manual" and c.channel == "sim"
+    assert c.stream_time is not None and c.stream_time > 0
+    assert 4 <= c.moment <= 7 and c.audio
+
+    # монтаж: обрезка одного клипа и склейка двух отрезков
+    from hypecut.editor import probe
+    cut = asyncio.run(e.montage([{"id": c.id, "start": 1, "end": 4}]))
+    assert cut.kind == "edit" and abs(probe(tmp_path / "clips" / cut.file)["duration"] - 3) < 0.5
+    mix = asyncio.run(e.montage([{"id": c.id, "start": 0, "end": 2}, {"id": cut.id, "start": 0, "end": 3}]))
+    info = probe(tmp_path / "clips" / mix.file)
+    assert abs(info["duration"] - 5) < 0.6 and info["audio"]
+    assert mix.sources == [c.id, cut.id]
+    with pytest.raises(ValueError):
+        asyncio.run(e.montage([{"id": "нет такого"}]))

@@ -15,6 +15,7 @@ class Trigger:
     at: float      # время момента (unix time)
     reason: str    # человекочитаемая причина
     score: float   # сила всплеска
+    kind: str = "manual"  # chat | audio | manual
 
 
 class ChatSpikeDetector:
@@ -53,6 +54,10 @@ class ChatSpikeDetector:
             self._events.popleft()
         return sum(w for _, w in self._events)
 
+    def history(self, start: float, end: float) -> list[tuple[float, float]]:
+        """Замеры активности чата (время, счёт) за промежуток, раз в секунду."""
+        return [(t, v) for t, v in self._samples if start <= t <= end]
+
     def baseline(self) -> float:
         if not self._samples:
             return 0.0
@@ -74,7 +79,7 @@ class ChatSpikeDetector:
         threshold = max(self.min_messages, base * self.multiplier)
         if score >= threshold:
             ratio = score / max(base, 1.0)
-            return Trigger(at=now, reason=f"чат x{ratio:.1f} ({int(score)} за {self.window}с)", score=ratio)
+            return Trigger(at=now, reason=f"чат x{ratio:.1f} ({int(score)} за {self.window}с)", score=ratio, kind="chat")
         return None
 
 
@@ -91,7 +96,7 @@ class AudioPeakDetector:
         if len(self._levels) >= self.min_history:
             base = statistics.median(self._levels)
             if mean_db - base >= self.db_above:
-                trig = Trigger(at=at, reason=f"звук +{mean_db - base:.1f} dB", score=mean_db - base)
+                trig = Trigger(at=at, reason=f"звук +{mean_db - base:.1f} dB", score=mean_db - base, kind="audio")
         self._levels.append(mean_db)
         return trig
 

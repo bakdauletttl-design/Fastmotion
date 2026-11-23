@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HypeCut</title>
+<style>
+  :root {
+    --bg:#000; --surface:#0a0a0a; --line:#262626; --line2:#3a3a3a;
+    --text:#fff; --muted:#8a8a8a; --dim:#555;
+    --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); font-size:14px; }
+  body { -webkit-font-smoothing:antialiased; }
+  .num { font-variant-numeric:tabular-nums; }
+  button { font:inherit; color:var(--text); background:transparent; border:1px solid var(--line2); padding:8px 14px; cursor:pointer; letter-spacing:.02em; }
+  button:hover:not(:disabled) { border-color:var(--text); }
+  button.primary { background:var(--text); color:var(--bg); border-color:var(--text); }
+  button.primary:hover:not(:disabled) { background:#ddd; }
+  button.link { border:0; padding:4px 0; color:var(--muted); text-align:left; align-self:flex-start; }
+  button.link:hover { color:var(--text); }
+  button:disabled { opacity:.35; cursor:default; }
+  a { color:var(--text); }
+  input[type=text], input[type=number] { width:100%; padding:10px 12px; background:var(--bg); color:var(--text); border:1px solid var(--line2); font:inherit; }
+  input:focus { outline:none; border-color:var(--text); }
+  .label { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+
+  /* шапка */
+  header { position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--line); }
+  .bar { max-width:1280px; margin:0 auto; padding:14px 24px; display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
+  .logo { font-weight:700; letter-spacing:.28em; font-size:15px; }
+  nav { display:flex; gap:20px; }
+  nav button { border:0; padding:6px 0; color:var(--muted); border-bottom:1px solid transparent; }
+  nav button.on { color:var(--text); border-bottom-color:var(--text); }
+  .grow { flex:1; }
+  .status { display:flex; gap:18px; align-items:center; color:var(--muted); font-size:13px; flex-wrap:wrap; }
+  .status b { color:var(--text); font-weight:500; }
+  .live { border:1px solid var(--line2); padding:2px 8px; font-size:11px; letter-spacing:.12em; color:var(--muted); }
+  .live.on { background:var(--text); color:var(--bg); border-color:var(--text); }
+
+  main { max-width:1280px; margin:0 auto; padding:24px; }
+  .view { display:none; }
+  .view.on { display:block; }
+
+  /* клипы */
+  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); align-items:start; }
+  .card { background:var(--bg); border:1px solid var(--line); display:flex; flex-direction:column; }
+  .card:hover { border-color:var(--line2); }
+  .thumb { position:relative; aspect-ratio:16/9; background:var(--surface); cursor:pointer; overflow:hidden; }
+  .thumb img, .thumb video { width:100%; height:100%; object-fit:cover; display:block; filter:grayscale(1); transition:filter .2s; }
+  .card:hover .thumb img, .thumb video { filter:none; }
+  .thumb .dur { position:absolute; right:8px; bottom:8px; background:var(--bg); padding:2px 6px; font-size:12px; }
+  .body { padding:14px 16px 16px; display:flex; flex-direction:column; gap:10px; flex:1; }
+  .head { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+  .kind { font-size:11px; letter-spacing:.12em; text-transform:uppercase; border:1px solid var(--line2); padding:2px 6px; }
+  .kind.chat, .kind.audio { background:var(--text); color:var(--bg); border-color:var(--text); }
+  .when { color:var(--muted); font-size:12px; text-align:right; }
+  .reason { font-size:15px; }
+  .mini { height:36px; width:100%; display:block; }
+  .msgs { font-size:12px; color:var(--muted); max-height:0; overflow:hidden; transition:max-height .2s; }
+  .msgs.open { max-height:400px; overflow:auto; }
+  .msgs div { padding:3px 0; border-top:1px solid var(--line); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; padding-top:4px; }
+  .actions button { padding:6px 10px; font-size:13px; }
+  .actions button.on { background:var(--text); color:var(--bg); }
+  .empty { padding:64px 0; color:var(--muted); text-align:center; line-height:1.7; }
+
+  /* таймлайн */
+  .track { position:relative; height:72px; background:var(--surface); border:1px solid var(--line); cursor:pointer; user-select:none; touch-action:none; }
+  .track svg { position:absolute; inset:0; width:100%; height:100%; }
+  .sel { position:absolute; top:0; bottom:0; background:rgba(255,255,255,.12); border-left:2px solid var(--text); border-right:2px solid var(--text); pointer-events:none; }
+  .handle { position:absolute; top:-1px; bottom:-1px; width:14px; margin-left:-7px; cursor:ew-resize; }
+  .handle::after { content:""; position:absolute; left:5px; top:24px; bottom:24px; width:4px; background:var(--text); }
+  .marker { position:absolute; top:-8px; bottom:0; width:0; border-left:1px dashed var(--text); pointer-events:none; }
+  .marker span { position:absolute; top:-12px; left:-24px; width:48px; text-align:center; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+  .playhead { position:absolute; top:0; bottom:0; width:1px; background:var(--muted); pointer-events:none; }
+  .ticks { display:flex; justify-content:space-between; color:var(--dim); font-size:11px; margin-top:6px; }
+
+  /* редактор */
+  #editor { position:fixed; inset:0; background:var(--bg); z-index:20; display:none; overflow:auto; }
+  #editor.on { display:block; }
+  .ed { max-width:1280px; margin:0 auto; padding:20px 24px 40px; display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:24px; }
+  .ed-top { grid-column:1/-1; display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--line); padding-bottom:14px; }
+  .ed video { width:100%; background:#000; display:block; aspect-ratio:16/9; }
+  .readout { display:flex; gap:28px; margin:16px 0 12px; flex-wrap:wrap; }
+  .readout div { display:flex; flex-direction:column; gap:4px; }
+  .readout b { font-size:20px; font-weight:500; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  .side { border-left:1px solid var(--line); padding-left:24px; display:flex; flex-direction:column; gap:18px; }
+  .side .msgs { max-height:none; overflow:visible; }
+
+  /* монтаж */
+  .mlist { border:1px solid var(--line); }
+  .mrow { display:grid; grid-template-columns:28px 120px 1fr auto; gap:16px; align-items:center; padding:12px 16px; border-top:1px solid var(--line); }
+  .mrow:first-child { border-top:0; }
+  .mrow img { width:120px; aspect-ratio:16/9; object-fit:cover; filter:grayscale(1); display:block; background:var(--surface); }
+  .mrow .idx { color:var(--muted); }
+  .mrow .ctrl { display:flex; gap:6px; }
+  .mrow .ctrl button { padding:4px 9px; font-size:12px; }
+  .mfoot { display:flex; justify-content:space-between; align-items:center; margin-top:20px; gap:16px; flex-wrap:wrap; }
+
+  /* настройки */
+  .settings { max-width:640px; }
+  .block { border-top:1px solid var(--line); padding:24px 0; }
+  .block:first-child { border-top:0; padding-top:0; }
+  .block h2 { margin:0 0 6px; font-size:16px; font-weight:600; }
+  .block p { color:var(--muted); margin:0 0 16px; line-height:1.6; }
+  .field { margin-top:14px; }
+  .field label { display:block; margin-bottom:6px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+  .check { display:flex; gap:8px; align-items:center; margin-top:16px; }
+  .hint { margin-top:10px; color:var(--muted); min-height:1.4em; }
+  .hint.err { color:var(--text); text-decoration:underline; }
+  details summary { cursor:pointer; color:var(--muted); list-style:none; }
+  details summary::before { content:"+ "; }
+  details[open] summary::before { content:"− "; }
+
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 16px; display:none; z-index:30; max-width:calc(100% - 32px); }
+  #busy { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:40; display:none; align-items:center; justify-content:center; letter-spacing:.12em; text-transform:uppercase; font-size:12px; }
+
+  @media (max-width:860px) {
+    header { position:static; }
+    .bar { gap:12px 20px; }
+    .ed { grid-template-columns:1fr; }
+    .side { border-left:0; padding-left:0; border-top:1px solid var(--line); padding-top:18px; }
+    .mrow { grid-template-columns:20px 80px 1fr; }
+    .mrow img { width:80px; }
+    .mrow .ctrl { grid-column:1/-1; }
+    .bar, main, .ed { padding-left:16px; padding-right:16px; }
+    .grid { grid-template-columns:1fr; }
+    .grid2 { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="logo">HYPECUT</div>
+    <nav>
+      <button data-view="clips" class="on">Клипы</button>
+      <button data-view="montage">Монтаж <span id="mcount" class="num"></span></button>
+      <button data-view="settings">Настройки</button>
+    </nav>
+    <div class="grow"></div>
+    <div class="status" id="status"></div>
+    <button id="tgBtn" title="Отправка клипов в Telegram">Telegram: вкл</button>
+    <button id="runBtn">Стоп</button>
+    <button class="primary" id="clipBtn" disabled>Клип сейчас</button>
+  </div>
+</header>
+
+<main>
+  <section class="view on" id="v-clips">
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section class="view" id="v-montage">
+    <div class="head" style="margin-bottom:16px">
+      <div><div class="label">Монтаж</div><div class="hint" style="margin-top:6px">Добавляйте клипы кнопкой «В монтаж», меняйте порядок и границы, затем склейте в один ролик.</div></div>
+    </div>
+    <div class="mlist" id="mlist"></div>
+    <div class="mfoot">
+      <div><span class="label">Итого</span> <b class="num" id="mtotal">0:00</b></div>
+      <div class="row" style="margin:0">
+        <button id="mclear">Очистить</button>
+        <button class="primary" id="mrender">Склеить и сохранить</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="view settings" id="v-settings">
+    <div class="block">
+      <h2>Канал</h2>
+      <p>Ссылка на Twitch-канал или ник стримера.</p>
+      <input type="text" id="channel" placeholder="twitch.tv/ник">
+    </div>
+    <div class="block">
+      <h2>Telegram</h2>
+      <p>Необязательно. 1. В Telegram откройте <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, отправьте /newbot и скопируйте токен. 2. Вставьте его ниже. 3. Напишите новому боту любое сообщение. 4. Нажмите «Найти чат».</p>
+      <div class="field"><label class="label" for="token">Токен бота</label><input type="text" id="token" placeholder="123456789:AA..."></div>
+      <div class="row"><button id="findBtn">Найти чат</button><button id="testBtn">Отправить тест</button></div>
+      <div class="field"><label class="label" for="chatId">Чат</label><input type="text" id="chatId" placeholder="заполнится автоматически"></div>
+      <div class="hint" id="tgHint"></div>
+    </div>
+    <div class="block">
+      <details>
+        <summary>Длина клипа и чувствительность</summary>
+        <div class="grid2">
+          <div class="field"><label class="label">Секунд до момента</label><input type="number" id="pre_roll" min="5" max="120"></div>
+          <div class="field"><label class="label">Секунд после</label><input type="number" id="post_roll" min="3" max="60"></div>
+          <div class="field"><label class="label">Пауза между клипами</label><input type="number" id="cooldown" min="10" max="600"></div>
+          <div class="field"><label class="label">Порог чата, раз</label><input type="number" id="chat_multiplier" step="0.5" min="1.5" max="10"></div>
+          <div class="field"><label class="label">Мин. сообщений за 10 с</label><input type="number" id="chat_min_messages" min="3" max="500"></div>
+          <div class="field"><label class="label">Порог звука, dB</label><input type="number" id="audio_db_above" min="3" max="30"></div>
+        </div>
+        <div class="field"><label class="label">Слова-триггеры</label><input type="text" id="hype_words"></div>
+        <label class="check"><input type="checkbox" id="audio_enabled"> Ловить громкие моменты по звуку</label>
+        <div class="hint">Маленький канал: уменьшите минимум сообщений до 5–8.</div>
+      </details>
+    </div>
+    <div class="row"><button class="primary" id="saveBtn">Сохранить и начать</button><button id="folderBtn">Открыть папку с клипами</button></div>
+  </section>
+</main>
+
+<div id="editor">
+  <div class="ed">
+    <div class="ed-top">
+      <button id="edClose">Назад</button>
+      <div class="grow"><div class="label" id="edKind"></div><div id="edTitle" style="margin-top:4px"></div></div>
+    </div>
+    <div>
+      <video id="edVideo" controls playsinline></video>
+      <div class="readout num">
+        <div><span class="label">Начало</span><b id="rStart">0:00.0</b></div>
+        <div><span class="label">Конец</span><b id="rEnd">0:00.0</b></div>
+        <div><span class="label">Длина</span><b id="rLen">0:00.0</b></div>
+        <div><span class="label">Позиция</span><b id="rPos">0:00.0</b></div>
+      </div>
+      <div class="track" id="track">
+        <svg id="trackSvg" preserveAspectRatio="none"></svg>
+        <div class="sel" id="sel"></div>
+        <div class="marker" id="marker"><span>момент</span></div>
+        <div class="playhead" id="playhead"></div>
+        <div class="handle" id="hStart"></div>
+        <div class="handle" id="hEnd"></div>
+      </div>
+      <div class="ticks num" id="ticks"></div>
+      <div class="hint">Тяните белые края, чтобы обрезать. Столбики — активность чата, линия — громкость.</div>
+      <div class="row">
+        <button id="setStart">Начало здесь</button>
+        <button id="setEnd">Конец здесь</button>
+        <button id="playSel">Проиграть отрезок</button>
+        <button id="toMoment">К моменту</button>
+      </div>
+      <div class="row">
+        <button class="primary" id="saveCut">Сохранить отрезок</button>
+        <button id="addCut">В монтаж</button>
+      </div>
+    </div>
+    <aside class="side">
+      <div><div class="label">Почему вырезано</div><div id="edWhy" style="margin-top:8px;line-height:1.6"></div></div>
+      <div><div class="label">Чат в этот момент</div><div class="msgs open" id="edMsgs" style="margin-top:8px"></div></div>
+    </aside>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="busy">Монтаж, подождите</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const NUM = ["pre_roll","post_roll","cooldown","chat_multiplier","chat_min_messages","audio_db_above"];
+const KIND = { chat:"Чат", audio:"Звук", manual:"Вручную", edit:"Монтаж" };
+let clips = [], known = null, status = {};
+let montage = load("hc_montage", []);
+
+function load(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } }
+function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
+function fmt(t, frac) {
+  t = Math.max(0, t || 0);
+  const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  const ss = frac ? s.toFixed(1).padStart(4, "0") : String(Math.floor(s)).padStart(2, "0");
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + ss;
+}
+function toast(text) {
+  const t = $("toast"); t.textContent = text; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 4000);
+}
+async function api(path, body, method) {
+  const r = await fetch(path, { method: method || (body ? "POST" : "GET"),
+    headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Ошибка");
+  return data;
+}
+
+/* ---------- навигация ---------- */
+function show(view) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.view === view));
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + view));
+  if (view === "settings") fillSettings();
+  if (view === "montage") renderMontage();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => show(b.dataset.view));
+
+/* ---------- статус ---------- */
+async function loadStatus() {
+  try { status = await api("/api/status"); } catch (e) { return; }
+  const s = status;
+  $("status").innerHTML = s.configured
+    ? `<span class="live ${s.live ? "on" : ""}">${s.live ? "LIVE" : "OFFLINE"}</span>` +
+      `<span><b>${esc(s.channel)}</b></span>` +
+      `<span>${esc(s.state)}</span>` +
+      (s.active ? `<span>чат <b class="num">${s.chat_connected ? s.chat_score : "—"}</b> / ${s.chat_baseline}</span>` : "")
+    : `<span>Укажите канал в настройках</span>`;
+  $("clipBtn").disabled = !s.live;
+  $("runBtn").textContent = s.active ? "Стоп" : "Старт";
+  $("runBtn").className = s.active ? "" : "primary";
+  $("runBtn").style.display = s.configured ? "" : "none";
+  $("tgBtn").textContent = "Telegram: " + (s.telegram_enabled ? "вкл" : "выкл");
+  $("tgBtn").style.display = s.configured ? "" : "none";
+  if (!s.configured && !loadStatus._sent) { loadStatus._sent = true; show("settings"); }
+}
+
+/* ---------- мини-график активности ---------- */
+function sparkSvg(c, w, h) {
+  const n = Math.max(1, Math.round(c.duration || c.chat?.length || 1));
+  const chat = c.chat || [];
+  const max = Math.max(1, ...chat);
+  const bw = w / n;
+  let bars = "";
+  chat.forEach((v, i) => { const bh = (v / max) * (h - 2); if (bh > 0) bars += `<rect x="${(i * bw).toFixed(2)}" y="${(h - bh).toFixed(2)}" width="${Math.max(1, bw - 1).toFixed(2)}" height="${bh.toFixed(2)}" fill="#5a5a5a"/>`; });
+  let line = "";
+  if (c.audio && c.audio.length > 1) {
+    const vals = c.audio.map(a => a[1]); const lo = Math.min(...vals), hi = Math.max(...vals, lo + 1);
+    line = `<polyline fill="none" stroke="#fff" stroke-width="1" vector-effect="non-scaling-stroke" points="${c.audio.map(a => `${(a[0] / n * w).toFixed(1)},${(h - 2 - (a[1] - lo) / (hi - lo) * (h - 6)).toFixed(1)}`).join(" ")}"/>`;
+  }
+  return bars + line;
+}
+
+/* ---------- клипы ---------- */
+async function loadClips(force) {
+  clips = await api("/api/clips");
+  const key = clips.map(c => c.id).join() + montage.length;
+  if (key === known && !force) return;
+  known = key;
+  renderGrid();
+}
+function inMontage(id) { return montage.some(m => m.id === id); }
+function renderGrid() {
+  $("mcount").textContent = montage.length ? `(${montage.length})` : "";
+  if (!clips.length) {
+    $("grid").innerHTML = `<div class="empty" style="grid-column:1/-1">Клипов пока нет.<br>Они появятся сами, когда в чате или в звуке будет всплеск.<br>Во время эфира можно нажать «Клип сейчас».</div>`;
+    return;
+  }
+  $("grid").innerHTML = clips.map(c => {
+    const d = new Date(c.created * 1000);
+    const st = c.stream_time != null ? `${fmt(c.stream_time)} от начала записи` : "";
+    const w = 300, h = 36, n = Math.max(1, c.duration);
+    const mx = c.kind !== "edit" ? (c.moment / n * w).toFixed(1) : null;
+    return `
+    <article class="card" data-id="${esc(c.id)}">
+      <div class="thumb" data-act="edit">
+        ${c.thumb ? `<img src="/clips/${esc(c.thumb)}" alt="" loading="lazy">` : ""}
+        <span class="dur num">${fmt(c.duration)}</span>
+      </div>
+      <div class="body">
+        <div class="head">
+          <span class="kind ${esc(c.kind)}">${KIND[c.kind] || "Клип"}</span>
+          <span class="when num">${d.toLocaleDateString("ru-RU")} ${d.toLocaleTimeString("ru-RU")}<br>${st}</span>
+        </div>
+        <div class="reason">${esc(c.reason)}</div>
+        ${c.kind !== "edit" ? `<svg class="mini" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${sparkSvg(c, w, h)}<line x1="${mx}" x2="${mx}" y1="0" y2="${h}" stroke="#fff" stroke-dasharray="2 2"/></svg>` : ""}
+        ${c.messages?.length ? `<button class="link" data-act="msgs">Чат в этот момент (${c.messages.length})</button><div class="msgs">${c.messages.map(m => `<div>${esc(m)}</div>`).join("")}</div>` : ""}
+        <div class="actions">
+          <button data-act="edit">Обрезать</button>
+          <button data-act="mtoggle" class="${inMontage(c.id) ? "on" : ""}">${inMontage(c.id) ? "В монтаже" : "В монтаж"}</button>
+          <a href="/clips/${esc(c.file)}" download><button>Скачать</button></a>
+          <button data-act="del">Удалить</button>
+        </div>
+      </div>
+    </article>`;
+  }).join("");
+}
+$("grid").addEventListener("click", async (e) => {
+  const el = e.target.closest("[data-act]"); if (!el) return;
+  const card = e.target.closest(".card"); const c = clips.find(x => x.id === card.dataset.id); if (!c) return;
+  const act = el.dataset.act;
+  if (act === "edit") openEditor(c);
+  if (act === "msgs") el.nextElementSibling.classList.toggle("open");
+  if (act === "mtoggle") {
+    if (inMontage(c.id)) montage = montage.filter(m => m.id !== c.id);
+    else montage.push({ id: c.id, start: 0, end: c.duration });
+    store("hc_montage", montage); known = null; loadClips(true);
+  }
+  if (act === "del") {
+    if (el.dataset.sure !== "1") { el.dataset.sure = "1"; el.textContent = "Точно удалить?"; setTimeout(() => { el.dataset.sure = ""; el.textContent = "Удалить"; }, 3000); return; }
+    await api(`/api/clips/${encodeURIComponent(c.id)}`, null, "DELETE");
+    montage = montage.filter(m => m.id !== c.id); store("hc_montage", montage);
+    known = null; loadClips(true);
+  }
+});
+async function toggle(body, msg) {
+  try { status = await api("/api/toggle", body); toast(msg); loadStatus(); } catch (e) { toast(e.message); }
+}
+$("runBtn").onclick = () => status.active
+  ? toggle({ active: false }, "Остановлено. Клипы не режутся и не отправляются.")
+  : toggle({ active: true }, "Запущено. Слежу за каналом.");
+$("tgBtn").onclick = () => toggle({ telegram_enabled: !status.telegram_enabled },
+  status.telegram_enabled ? "Отправка в Telegram выключена" : "Отправка в Telegram включена");
+$("clipBtn").onclick = async () => {
+  try { const b = await api("/api/clip", {}); toast(`Режу клип, будет готов через ~${b.ready_in} с`); }
+  catch (e) { toast(e.message); }
+};
+
+/* ---------- редактор ---------- */
+const ed = { clip: null, start: 0, end: 0, dur: 1, montageIndex: null, stopAt: null };
+const v = $("edVideo");
+
+function openEditor(c, montageIndex) {
+  ed.clip = c; ed.montageIndex = montageIndex ?? null;
+  const m = montageIndex != null ? montage[montageIndex] : null;
+  ed.dur = c.duration || 1;
+  ed.start = m ? m.start : 0; ed.end = m ? m.end : ed.dur;
+  v.src = `/clips/${c.file}`;
+  $("edKind").textContent = (KIND[c.kind] || "Клип") + (c.stream_time != null ? ` · ${fmt(c.stream_time)} от начала записи` : "");
+  $("edTitle").textContent = c.reason;
+  const why = {
+    chat: `Чат резко оживился: ${esc(c.reason)}. Обычно сообщений намного меньше.`,
+    audio: `Звук стал заметно громче обычного: ${esc(c.reason)}.`,
+    manual: "Вы нажали «Клип сейчас».",
+    edit: "Ролик, собранный в монтаже.",
+  }[c.kind] || esc(c.reason);
+  $("edWhy").innerHTML = why + (c.kind !== "edit" ? `<br><span class="hint">Момент на ${fmt(c.moment, true)} внутри клипа (пунктир на шкале).</span>` : "");
+  $("edMsgs").innerHTML = c.messages?.length ? c.messages.map(m => `<div>${esc(m)}</div>`).join("") : `<div style="border:0">Сообщений нет</div>`;
+  $("addCut").textContent = ed.montageIndex != null ? "Обновить в монтаже" : "В монтаж";
+  $("saveCut").style.display = ed.montageIndex != null ? "none" : "";
+  $("marker").style.display = c.kind === "edit" ? "none" : "";
+  $("editor").classList.add("on"); document.body.style.overflow = "hidden";
+  drawTrack(); updateTrack();
+  v.onloadedmetadata = () => {
+    if (isFinite(v.duration) && v.duration > 0) {
+      const full = ed.end >= ed.dur - 0.05;
+      ed.dur = v.duration; if (full) ed.end = ed.dur; ed.end = Math.min(ed.end, ed.dur);
+      drawTrack(); updateTrack();
+    }
+    v.currentTime = c.kind !== "edit" && ed.montageIndex == null ? Math.max(0, c.moment - 3) : ed.start;
+  };
+}
+function closeEditor() { v.pause(); v.removeAttribute("src"); v.load(); $("editor").classList.remove("on"); document.body.style.overflow = ""; }
+$("edClose").onclick = closeEditor;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("editor").classList.contains("on")) closeEditor(); });
+
+function drawTrack() {
+  const c = ed.clip, w = 1000, h = 72;
+  $("trackSvg").setAttribute("viewBox", `0 0 ${w} ${h}`);
+  $("trackSvg").innerHTML = c.kind !== "edit" ? sparkSvg({ ...c, duration: ed.dur }, w, h) : "";
+  const step = ed.dur > 60 ? 10 : ed.dur > 20 ? 5 : 2;
+  let ticks = ""; for (let t = 0; t <= ed.dur + 0.01; t += step) ticks += `<span>${fmt(t)}</span>`;
+  $("ticks").innerHTML = ticks;
+}
+function pct(t) { return (t / ed.dur * 100) + "%"; }
+function updateTrack() {
+  $("sel").style.left = pct(ed.start); $("sel").style.width = ((ed.end - ed.start) / ed.dur * 100) + "%";
+  $("hStart").style.left = pct(ed.start); $("hEnd").style.left = pct(ed.end);
+  $("marker").style.left = pct(Math.min(ed.clip.moment || 0, ed.dur));
+  $("playhead").style.left = pct(v.currentTime || 0);
+  $("rStart").textContent = fmt(ed.start, true); $("rEnd").textContent = fmt(ed.end, true);
+  $("rLen").textContent = fmt(ed.end - ed.start, true); $("rPos").textContent = fmt(v.currentTime, true);
+}
+v.ontimeupdate = () => {
+  if (ed.stopAt != null && v.currentTime >= ed.stopAt) { v.pause(); ed.stopAt = null; }
+  updateTrack();
+};
+function timeAt(e) { const r = $("track").getBoundingClientRect(); return Math.min(ed.dur, Math.max(0, (e.clientX - r.left) / r.width * ed.dur)); }
+let drag = null;
+$("hStart").onpointerdown = (e) => { drag = "start"; e.stopPropagation(); $("track").setPointerCapture(e.pointerId); };
+$("hEnd").onpointerdown = (e) => { drag = "end"; e.stopPropagation(); $("track").setPointerCapture(e.pointerId); };
+$("track").onpointerdown = (e) => { drag = "seek"; $("track").setPointerCapture(e.pointerId); v.currentTime = timeAt(e); };
+$("track").onpointermove = (e) => {
+  if (!drag) return; const t = timeAt(e);
+  if (drag === "start") { ed.start = Math.min(t, ed.end - 0.5); v.currentTime = ed.start; }
+  else if (drag === "end") { ed.end = Math.max(t, ed.start + 0.5); v.currentTime = ed.end; }
+  else v.currentTime = t;
+  updateTrack();
+};
+$("track").onpointerup = () => drag = null;
+$("setStart").onclick = () => { ed.start = Math.min(v.currentTime, ed.end - 0.5); updateTrack(); };
+$("setEnd").onclick = () => { ed.end = Math.max(v.currentTime, ed.start + 0.5); updateTrack(); };
+$("playSel").onclick = () => { v.currentTime = ed.start; ed.stopAt = ed.end; v.play(); };
+$("toMoment").onclick = () => { v.currentTime = Math.max(0, (ed.clip.moment || 0) - 2); v.play(); };
+$("addCut").onclick = () => {
+  const item = { id: ed.clip.id, start: +ed.start.toFixed(2), end: +ed.end.toFixed(2) };
+  if (ed.montageIndex != null) montage[ed.montageIndex] = item; else montage.push(item);
+  store("hc_montage", montage); known = null; renderGrid(); renderMontage();
+  toast(ed.montageIndex != null ? "Отрезок обновлён" : "Добавлено в монтаж");
+  closeEditor();
+};
+$("saveCut").onclick = async () => {
+  await renderItems([{ id: ed.clip.id, start: ed.start, end: ed.end }]);
+  closeEditor();
+};
+
+/* ---------- монтаж ---------- */
+function renderMontage() {
+  const byId = Object.fromEntries(clips.map(c => [c.id, c]));
+  montage = montage.filter(m => byId[m.id]); store("hc_montage", montage);
+  $("mcount").textContent = montage.length ? `(${montage.length})` : "";
+  const total = montage.reduce((s, m) => s + (m.end - m.start), 0);
+  $("mtotal").textContent = fmt(total, true);
+  $("mrender").disabled = !montage.length;
+  $("mlist").innerHTML = montage.length ? montage.map((m, i) => {
+    const c = byId[m.id];
+    return `<div class="mrow" data-i="${i}">
+      <span class="idx num">${i + 1}</span>
+      ${c.thumb ? `<img src="/clips/${esc(c.thumb)}" alt="">` : `<div style="width:120px;aspect-ratio:16/9;background:var(--surface)"></div>`}
+      <div><div>${esc(c.reason)}</div><div class="hint num" style="margin-top:4px">${fmt(m.start, true)} – ${fmt(m.end, true)} · ${fmt(m.end - m.start, true)}</div></div>
+      <div class="ctrl">
+        <button data-m="up" ${i === 0 ? "disabled" : ""}>Выше</button>
+        <button data-m="down" ${i === montage.length - 1 ? "disabled" : ""}>Ниже</button>
+        <button data-m="edit">Границы</button>
+        <button data-m="rm">Убрать</button>
+      </div></div>`;
+  }).join("") : `<div class="empty">Пусто. Откройте «Клипы» и нажмите «В монтаж» у нужных.</div>`;
+}
+$("mlist").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-m]"); if (!b) return;
+  const i = +b.closest(".mrow").dataset.i;
+  if (b.dataset.m === "up") [montage[i - 1], montage[i]] = [montage[i], montage[i - 1]];
+  if (b.dataset.m === "down") [montage[i + 1], montage[i]] = [montage[i], montage[i + 1]];
+  if (b.dataset.m === "rm") montage.splice(i, 1);
+  if (b.dataset.m === "edit") { openEditor(clips.find(c => c.id === montage[i].id), i); return; }
+  store("hc_montage", montage); renderMontage(); known = null; renderGrid();
+});
+$("mclear").onclick = () => { montage = []; store("hc_montage", montage); renderMontage(); known = null; renderGrid(); };
+$("mrender").onclick = async () => { if (await renderItems(montage)) { montage = []; store("hc_montage", montage); renderMontage(); show("clips"); } };
+
+async function renderItems(items) {
+  $("busy").style.display = "flex";
+  try {
+    const c = await api("/api/montage", { items });
+    toast(`Готово: ${c.reason}, ${fmt(c.duration)}`);
+    known = null; await loadClips(true);
+    return true;
+  } catch (e) { toast(e.message); return false; }
+  finally { $("busy").style.display = "none"; }
+}
+
+/* ---------- настройки ---------- */
+$("folderBtn").onclick = () => api("/api/open-folder", {}).catch(e => toast(e.message));
+function hint(text, err) { $("tgHint").textContent = text; $("tgHint").className = "hint" + (err ? " err" : ""); }
+async function fillSettings() {
+  const s = await api("/api/settings");
+  $("channel").value = s.channel; $("token").value = s.telegram_token; $("chatId").value = s.telegram_chat_id;
+  NUM.forEach(k => $(k).value = s[k]);
+  $("hype_words").value = s.hype_words.join(", ");
+  $("audio_enabled").checked = s.audio_enabled;
+}
+$("findBtn").onclick = async () => {
+  hint("Ищу…");
+  try {
+    const r = await api("/api/telegram/find-chat", { token: $("token").value });
+    if (r.ok) { $("chatId").value = r.chat_id; hint(`Найден чат: ${r.name}. Нажмите «Отправить тест».`); } else hint(r.error, true);
+  } catch (e) { hint(e.message, true); }
+};
+$("testBtn").onclick = async () => {
+  try {
+    const r = await api("/api/telegram/test", { token: $("token").value, chat_id: $("chatId").value });
+    r.ok ? hint("Отправлено. Проверьте Telegram.") : hint("Telegram: " + r.error, true);
+  } catch (e) { hint(e.message, true); }
+};
+$("saveBtn").onclick = async () => {
+  const body = { channel: $("channel").value, telegram_token: $("token").value, telegram_chat_id: $("chatId").value,
+    hype_words: $("hype_words").value, audio_enabled: $("audio_enabled").checked };
+  NUM.forEach(k => body[k] = $(k).value);
+  try { await api("/api/settings", body); toast("Сохранено. Слежу за каналом."); show("clips"); loadStatus(); }
+  catch (e) { toast(e.message); }
+};
+
+loadStatus(); loadClips();
+setInterval(loadStatus, 2000);
+setInterval(() => { if (!$("editor").classList.contains("on")) loadClips(); }, 5000);
+</script>
+</body>
+</html>

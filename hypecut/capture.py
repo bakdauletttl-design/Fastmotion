@@ -1,13 +1,16 @@
-"""Захват стрима: streamlink -> ffmpeg -> кольцевой буфер из коротких .ts кусков."""
+"""Захват стрима: streamlink (как библиотека) -> ffmpeg -> кольцевой буфер из коротких .ts кусков."""
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
+import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Awaitable, BinaryIO, Callable
+
+from .paths import FFMPEG, NO_WINDOW
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +29,10 @@ class Segment:
 SegmentCallback = Callable[[Segment], Awaitable[None]]
 
 
+class StreamOffline(Exception):
+    pass
+
+
 class StreamRecorder:
     def __init__(self, channel: str, quality: str, buffer_dir: Path,
                  segment_seconds: int, buffer_seconds: int):
@@ -36,6 +43,8 @@ class StreamRecorder:
         self.buffer_seconds = buffer_seconds
         self.segments: list[Segment] = []
         self.live = False
+        self.started_at: float | None = None  # когда началась текущая запись
+        self.state = "запуск"
         self._listeners: list[SegmentCallback] = []
 
     def on_segment(self, cb: SegmentCallback) -> None:
@@ -44,17 +53,33 @@ class StreamRecorder:
     def segments_between(self, start: float, end: float) -> list[Segment]:
         return [s for s in self.segments if s.end > start and s.start < end]
 
+    def open_stream(self) -> BinaryIO:
+        """Открывает поток Twitch. Блокирующий вызов, выполняется в отдельном потоке."""
+        from streamlink import Streamlink
+        from streamlink.options import Options
+
+        session = Streamlink()
+        streams = session.streams(f"https://twitch.tv/{self.channel}",
+                                  options=Options({"disable-ads": True}))
+        if not streams:
+            raise StreamOffline()
+        stream = streams.get(self.quality) or streams.get("best")
+        return stream.open()
+
     async def run(self) -> None:
         """Бесконечный цикл: ждём эфир, пишем, при обрыве переподключаемся."""
         while True:
             try:
                 await self._record_once()
+                self.state = "стрим закончился"
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except StreamOffline:
+                self.state = "канал офлайн, жду начала стрима"
+            except Exception as e:
                 log.exception("Ошибка захвата")
+                self.state = f"ошибка: {e}"
             self.live = False
-            log.info("Стрим %s офлайн или оборвался, повтор через 30 с", self.channel)
             await asyncio.sleep(30)
 
     async def _record_once(self) -> None:
@@ -62,60 +87,68 @@ class StreamRecorder:
         for old in self.buffer_dir.glob("*"):
             old.unlink(missing_ok=True)
         self.segments.clear()
+        self.started_at = None
+        self.state = "подключаюсь к стриму"
+
+        source = await asyncio.to_thread(self.open_stream)
 
         list_file = self.buffer_dir / "segments.csv"
         list_file.touch()
         prefix = f"seg_{int(time.time())}_"
-
-        read_fd, write_fd = os.pipe()
-        streamlink = await asyncio.create_subprocess_exec(
-            "streamlink", "--stdout", "--twitch-disable-ads", "--loglevel", "warning",
-            f"https://twitch.tv/{self.channel}", self.quality,
-            stdout=write_fd, stderr=asyncio.subprocess.PIPE,
-        )
-        os.close(write_fd)
-        ffmpeg = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+        ffmpeg = subprocess.Popen([
+            FFMPEG, "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
             "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy",
             "-f", "segment", "-segment_time", str(self.segment_seconds),
             "-reset_timestamps", "1",
             "-segment_list", str(list_file), "-segment_list_type", "csv",
-            "-segment_list_flags", "live",
             str(self.buffer_dir / f"{prefix}%06d.ts"),
-            stdin=read_fd, stderr=asyncio.subprocess.PIPE,
-        )
-        os.close(read_fd)
+        ], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **NO_WINDOW)
+        self.state = "идёт запись"
         log.info("Запись стрима %s запущена", self.channel)
+
+        stop = threading.Event()
+
+        def pump() -> None:
+            try:
+                while not stop.is_set():
+                    data = source.read(64 * 1024)
+                    if not data:
+                        break
+                    ffmpeg.stdin.write(data)
+            except (OSError, ValueError):
+                pass
+            finally:
+                try:
+                    ffmpeg.stdin.close()
+                except OSError:
+                    pass
 
         watcher = asyncio.create_task(self._watch_list(list_file))
         try:
-            await ffmpeg.wait()
+            await asyncio.to_thread(pump)
+            await asyncio.to_thread(ffmpeg.wait, 15)
         finally:
+            stop.set()
             watcher.cancel()
-            for proc in (streamlink, ffmpeg):
-                if proc.returncode is None:
-                    proc.terminate()
-                    try:
-                        await asyncio.wait_for(proc.wait(), 5)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-            if streamlink.stderr:
-                err = (await streamlink.stderr.read()).decode(errors="replace").strip()
-                if err:
-                    log.warning("streamlink: %s", err[-500:])
+            try:
+                source.close()
+            except Exception:
+                pass
+            if ffmpeg.poll() is None:
+                ffmpeg.kill()
 
     async def _watch_list(self, list_file: Path) -> None:
         """Следим за csv-списком ffmpeg: строка появляется, когда кусок дописан."""
         pos = 0
         while True:
             await asyncio.sleep(0.5)
-            with list_file.open("r", encoding="utf-8") as f:
+            with list_file.open("rb") as f:
                 f.seek(pos)
                 chunk = f.read()
-            if not chunk or not chunk.endswith("\n"):
+            if not chunk or not chunk.endswith(b"\n"):
                 continue
-            pos += len(chunk.encode("utf-8"))
-            for line in chunk.splitlines():
+            pos += len(chunk)
+            for line in chunk.decode("utf-8", errors="replace").splitlines():
                 parts = line.strip().split(",")
                 if len(parts) < 3:
                     continue
@@ -123,6 +156,8 @@ class StreamRecorder:
                 now = time.time()
                 seg = Segment(self.buffer_dir / name, now - (e - s), now)
                 self.segments.append(seg)
+                if self.started_at is None:
+                    self.started_at = seg.start
                 self.live = True
                 self._trim()
                 for cb in self._listeners:

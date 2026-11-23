@@ -1,7 +1,19 @@
-# Fastmotion
+# HypeCut
 
 Следит за Twitch-стримом в реальном времени, сам находит яркие моменты и режет клипы.
-Клипы приходят в Telegram и лежат в веб-интерфейсе.
+Клипы приходят в Telegram и лежат в окне программы.
+
+## Как пользоваться (Windows)
+
+1. Скачайте **HypeCut.exe** со страницы [Releases](../../releases/latest).
+2. Положите его в любую папку, например на Рабочий стол, и запустите двойным щелчком.
+   Если Windows покажет «Система Windows защитила ваш компьютер», нажмите «Подробнее» → «Выполнить в любом случае».
+3. Откроется браузер с настройками. Вставьте ссылку на Twitch-канал и нажмите **«Сохранить и начать»**.
+4. Для Telegram (по желанию) следуйте подсказкам на той же странице: создать бота в @BotFather,
+   вставить токен, написать боту, нажать «Найти мой чат».
+
+Пока стрим идёт, не закрывайте чёрное окно HypeCut. Клипы сохраняются в папку `HypeCutData\clips` рядом с программой.
+Чтобы открыть окно программы снова, перейдите на http://localhost:8000.
 
 ## Как это работает
 
@@ -13,42 +25,18 @@ twitch.tv ──streamlink──► ffmpeg ──► буфер: последн�
                                          ▼
                          клип: 20 с до момента + 10 с после (без перекодирования)
                                          ▼
-                         Telegram-бот  +  веб-интерфейс http://localhost:8000
+                         Telegram-бот  +  веб-окно http://localhost:8000
 ```
 
-## Запуск
+## Для разработчиков
 
-Нужны Python 3.10+ и ffmpeg (`winget install ffmpeg` / `brew install ffmpeg` / `apt install ffmpeg`).
+Нужны Python 3.10+ и ffmpeg.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env             # и впишите TWITCH_CHANNEL
-python -m fastmotion
-```
-
-Откройте http://localhost:8000. Кнопка «✂️ Клип сейчас» режет момент вручную.
-
-## Telegram
-
-1. Напишите @BotFather → `/newbot`, получите токен → `TELEGRAM_BOT_TOKEN`.
-2. Напишите своему боту любое сообщение, затем узнайте свой id у @userinfobot → `TELEGRAM_CHAT_ID`.
-   Можно указать id группы или канала, куда добавлен бот.
-
-## Настройка чувствительности
-
-| Переменная | По умолчанию | Что делает |
-|---|---|---|
-| `CHAT_MULTIPLIER` | 3.0 | во сколько раз чат должен быть активнее обычного |
-| `CHAT_MIN_MESSAGES` | 15 | минимум сообщений за 10 с (для маленьких каналов уменьшить) |
-| `HYPE_WORDS` | kekw,pog,lul,клип… | слова, которые весят вдвое больше |
-| `AUDIO_DB_ABOVE` | 8 | насколько dB громче обычного для срабатывания |
-| `CLIP_PRE_ROLL` / `CLIP_POST_ROLL` | 20 / 10 | секунд до и после момента |
-| `CLIP_COOLDOWN` | 45 | пауза между клипами |
-
-## Тесты
-
-```bash
+python -m hypecut --open        # настройки в браузере, либо через .env (см. .env.example)
 pip install pytest && python -m pytest -q
 ```
+
+`HypeCut.exe` собирается в GitHub Actions (`.github/workflows/windows-build.yml`).
+Каждое изменение в ветке `main` автоматически публикует новый релиз.
