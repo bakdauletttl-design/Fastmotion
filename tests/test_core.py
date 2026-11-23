@@ -107,10 +107,15 @@ def test_web_endpoints(tmp_path: Path):
     assert r.status_code == 200
     saved = client.get("/api/settings").json()
     assert saved["channel"] == "somestreamer" and saved["pre_roll"] == 25 and saved["hype_words"] == ["kekw", "pog"]
+    # кнопки «Стоп» и «Telegram: выкл»
+    st = client.post("/api/toggle", json={"active": False, "telegram_enabled": False}).json()
+    assert st["active"] is False and st["telegram_enabled"] is False and st["state"] == "остановлено"
+    st = client.post("/api/toggle", json={"active": True}).json()
+    assert st["active"] is True and st["telegram_enabled"] is False
     # настройки переживают перезапуск
     assert Settings(data_dir=tmp_path).__class__  # noqa
     s2 = Settings(data_dir=tmp_path); s2.load_saved()
-    assert s2.channel == "somestreamer" and s2.audio_enabled is False
+    assert s2.channel == "somestreamer" and s2.audio_enabled is False and s2.telegram_enabled is False
 
 
 def test_recorder_and_engine_end_to_end(tmp_path: Path):
@@ -141,4 +146,20 @@ def test_recorder_and_engine_end_to_end(tmp_path: Path):
 
     e = asyncio.run(scenario())
     assert len(e.clips) == 1
-    assert (tmp_path / "clips" / e.clips[0].file).stat().st_size > 10_000
+    c = e.clips[0]
+    assert (tmp_path / "clips" / c.file).stat().st_size > 10_000
+    # о моменте сохранено, когда и почему он вырезан
+    assert c.kind == "manual" and c.channel == "sim"
+    assert c.stream_time is not None and c.stream_time > 0
+    assert 4 <= c.moment <= 7 and c.audio
+
+    # монтаж: обрезка одного клипа и склейка двух отрезков
+    from hypecut.editor import probe
+    cut = asyncio.run(e.montage([{"id": c.id, "start": 1, "end": 4}]))
+    assert cut.kind == "edit" and abs(probe(tmp_path / "clips" / cut.file)["duration"] - 3) < 0.5
+    mix = asyncio.run(e.montage([{"id": c.id, "start": 0, "end": 2}, {"id": cut.id, "start": 0, "end": 3}]))
+    info = probe(tmp_path / "clips" / mix.file)
+    assert abs(info["duration"] - 5) < 0.6 and info["audio"]
+    assert mix.sources == [c.id, cut.id]
+    with pytest.raises(ValueError):
+        asyncio.run(e.montage([{"id": "нет такого"}]))

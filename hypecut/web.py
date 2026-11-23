@@ -60,6 +60,17 @@ def create_app(settings: Settings, run_engine: bool = True) -> FastAPI:
             engine._build()
         return {"ok": True}
 
+    @app.post("/api/toggle")
+    async def toggle(values: dict = Body(...)):
+        """Кнопки «Стоп/Старт» и переключатель отправки в Telegram."""
+        settings.update({k: values[k] for k in ("active", "telegram_enabled") if k in values})
+        settings.save()
+        if run_engine:
+            await engine.restart()
+        else:
+            engine._build()
+        return engine.status()
+
     @app.post("/api/telegram/find-chat")
     async def telegram_find(values: dict = Body(...)):
         token = str(values.get("token", "")).strip()
@@ -76,7 +87,7 @@ def create_app(settings: Settings, run_engine: bool = True) -> FastAPI:
         if not sender.enabled:
             raise HTTPException(400, "Нужны токен и чат")
         try:
-            ok, err = await sender.send_text("✅ HypeCut подключён. Сюда будут приходить клипы.")
+            ok, err = await sender.send_text("HypeCut подключён. Сюда будут приходить клипы.")
         except Exception as e:
             ok, err = False, str(e)
         return {"ok": ok, "error": err}
@@ -92,6 +103,15 @@ def create_app(settings: Settings, run_engine: bool = True) -> FastAPI:
         if not engine.manual_clip():
             raise HTTPException(429, "Подождите, недавно уже был клип")
         return {"ok": True, "ready_in": settings.post_roll + settings.segment_seconds}
+
+    @app.post("/api/montage")
+    async def montage(values: dict = Body(...)):
+        items = values.get("items") or []
+        try:
+            clip = await engine.montage(items)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(400, str(e))
+        return clip.__dict__
 
     @app.post("/api/open-folder")
     async def open_folder():

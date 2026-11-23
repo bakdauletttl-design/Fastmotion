@@ -43,6 +43,7 @@ class StreamRecorder:
         self.buffer_seconds = buffer_seconds
         self.segments: list[Segment] = []
         self.live = False
+        self.started_at: float | None = None  # когда началась текущая запись
         self.state = "запуск"
         self._listeners: list[SegmentCallback] = []
 
@@ -86,6 +87,7 @@ class StreamRecorder:
         for old in self.buffer_dir.glob("*"):
             old.unlink(missing_ok=True)
         self.segments.clear()
+        self.started_at = None
         self.state = "подключаюсь к стриму"
 
         source = await asyncio.to_thread(self.open_stream)
@@ -154,6 +156,8 @@ class StreamRecorder:
                 now = time.time()
                 seg = Segment(self.buffer_dir / name, now - (e - s), now)
                 self.segments.append(seg)
+                if self.started_at is None:
+                    self.started_at = seg.start
                 self.live = True
                 self._trim()
                 for cb in self._listeners:

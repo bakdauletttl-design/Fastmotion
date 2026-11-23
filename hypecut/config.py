@@ -14,6 +14,7 @@ EDITABLE = {
     "pre_roll": int, "post_roll": int, "cooldown": int,
     "chat_multiplier": float, "chat_min_messages": int, "hype_words": list,
     "audio_enabled": bool, "audio_db_above": float,
+    "active": bool, "telegram_enabled": bool,
 }
 
 
@@ -60,7 +61,10 @@ class Settings:
     audio_enabled: bool = True
     audio_db_above: float = 8.0     # насколько dB громче обычного
 
+    active: bool = True             # False = нарезка остановлена кнопкой «Стоп»
+
     # Telegram
+    telegram_enabled: bool = True   # можно выключить отправку, не стирая токен
     telegram_token: str = ""
     telegram_chat_id: str = ""
 
