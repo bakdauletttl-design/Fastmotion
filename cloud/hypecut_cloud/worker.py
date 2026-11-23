@@ -14,8 +14,8 @@ from hypecut.capture import StreamOffline, StreamRecorder
 from hypecut.chat import chat_messages
 from hypecut.clipper import build_clip, make_thumbnail, mean_volume
 from hypecut.detector import AudioPeakDetector, ChatSpikeDetector, Trigger
-from hypecut.paths import FFMPEG
 
+from . import enhance
 from .config import Config
 from .db import DB
 from .plans import can_receive
@@ -25,23 +25,8 @@ from .telegram_api import TelegramAPI
 log = logging.getLogger(__name__)
 
 
-def _vertical_sync(src: Path, out: Path) -> Path | None:
-    """Вертикальная версия 1080x1920 для TikTok / Shorts / Reels: картинка по центру, сверху и снизу размытый фон."""
-    graph = ("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg];"
-             "[0:v]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]")
-    p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
-                        "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-                        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)],
-                       capture_output=True)
-    if p.returncode != 0 or not out.exists():
-        log.warning("Не получилось сделать вертикальную версию: %s", p.stderr.decode(errors="replace")[-300:])
-        return None
-    return out
-
-
-async def make_vertical(src: Path, out: Path) -> Path | None:
-    return await asyncio.to_thread(_vertical_sync, src, out)
+async def make_vertical(src: Path, out: Path, words=None) -> Path | None:
+    return await asyncio.to_thread(enhance.make_vertical, src, out, words)
 
 
 class SourceRecorder(StreamRecorder):
@@ -102,7 +87,8 @@ class Dispatcher:
         if clip is None:
             return 0
         src = from_key(clip["channel"])
-        caption = (f"HypeCut · {src.name.lstrip('@')} ({src.title})\n{clip['reason']} · "
+        head = f"🔥 {clip['title']}\n" if clip["title"] else ""
+        caption = (f"{head}HypeCut · {src.name.lstrip('@')} ({src.title})\n{clip['reason']} · "
                    f"{datetime.fromtimestamp(clip['created']):%H:%M}\n{src.public()['url']}")
         sent = 0
         for user in self.db.followers(clip["channel"]):
@@ -213,16 +199,22 @@ class ChannelWorker:
             log.exception("Не удалось собрать клип %s", clip_id)
             return None
         thumb = await make_thumbnail(out, out.with_suffix(".jpg"))
+        chat = [f"{n}: {m}" for t, n, m in self.messages if trig.at - 12 <= t <= trig.at + 4][-8:]
+        # речь стримера: для субтитров в вертикали и для заголовка
+        words = await asyncio.to_thread(enhance.transcribe, out)
+        transcript = " ".join(w.text for w in words)
+        title = await asyncio.to_thread(enhance.make_title, self.source.name.lstrip("@"), transcript,
+                                        chat, trig.reason)
         vertical = None
         if self.dispatcher.needs_vertical(self.channel):
-            vertical = await make_vertical(out, out.with_name(f"{clip_id}_9x16.mp4"))
+            vertical = await make_vertical(out, out.with_name(f"{clip_id}_9x16.mp4"), words)
         self.db.add_clip(id=clip_id, channel=self.channel, stream_id=self.stream_id, file=out.name,
                          vertical_file=vertical.name if vertical else None,
                          thumb=thumb.name if thumb else None, reason=trig.reason, kind=trig.kind,
                          created=trig.at, duration=round(end - max(start, segments[0].start), 1),
                          moment=round(trig.at - max(start, segments[0].start), 1),
-                         messages=json.dumps([f"{n}: {m}" for t, n, m in self.messages
-                                              if trig.at - 12 <= t <= trig.at + 4][-8:], ensure_ascii=False))
+                         messages=json.dumps(chat, ensure_ascii=False), title=title,
+                         transcript=transcript or None)
         count = await self.dispatcher.deliver(clip_id)
         log.info("Клип %s разослан %d подписчикам", clip_id, count)
         return clip_id

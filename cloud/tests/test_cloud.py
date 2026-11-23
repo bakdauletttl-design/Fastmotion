@@ -286,3 +286,34 @@ def test_telegram_stars_subscription(env):
     assert db.plan_of(u).id == "pro" and u["plan_until"] == until
     assert "оформлена" in tg.messages[-1][1]
     assert db.one("SELECT charge_id FROM payments")["charge_id"] == "ch1"
+
+
+def test_enhance_titles_subtitles_and_vertical(tmp_path, monkeypatch):
+    import subprocess
+    from hypecut_cloud import enhance as e
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert e.simple_title("", ["a: KEKW", "b: kekw", "c: ну"], "чат x5") == "Чат: «KEKW» ×2"
+    assert e.simple_title("я не верю что это сработало вообще", [], "звук").startswith("«я не верю")
+    assert e.make_title("x", "", [], "звук +9 dB") == "звук +9 dB"
+
+    words = [e.Word(0.1, 0.4, "раз"), e.Word(0.4, 0.8, "два"), e.Word(0.8, 1.0, "три"),
+             e.Word(1.0, 1.3, "четыре"), e.Word(3.0, 3.4, "{пауза}")]
+    assert [len(c) for c in e.chunks(words)] == [3, 1, 1]
+    ass = e.write_ass(words, tmp_path / "s.ass")
+    text = ass.read_text(encoding="utf-8")
+    assert text.count("Dialogue:") == 5 and "(ПАУЗА)" in text and e.ACCENT_ASS in text
+
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=2:r=15",
+                    "-f", "lavfi", "-i", "sine=d=2", "-shortest", "-c:v", "libx264", "-c:a", "aac", str(src)],
+                   check=True)
+    for layout in (e.Layout("split", box=(400, 200, 200, 118), src_w=640, src_h=360),
+                   e.Layout("follow", cx=600, src_w=640, src_h=360), e.Layout("blur")):
+        monkeypatch.setattr(e, "find_layout", lambda v, l=layout: l)
+        out = e.make_vertical(src, tmp_path / f"{layout.kind}.mp4", words)
+        assert out and out.stat().st_size > 0
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                "stream=width,height", "-of", "csv=p=0", str(out)],
+                               capture_output=True, text=True).stdout.strip()
+        assert probe == "1080,1920"

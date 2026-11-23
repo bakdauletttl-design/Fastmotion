@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS clips (
     moment REAL,                     -- на какой секунде клипа сам момент
     messages TEXT,                   -- сообщения чата вокруг момента (JSON-список строк)
     tg_file_id TEXT,                 -- после первой отправки Telegram отдаёт id, дальше шлём по нему
-    tg_vertical_file_id TEXT
+    tg_vertical_file_id TEXT,
+    title TEXT,                      -- заголовок клипа (ИИ или по словам из чата)
+    transcript TEXT                  -- что говорил стример (распознанная речь)
 );
 CREATE TABLE IF NOT EXISTS deliveries (
     clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
@@ -91,7 +93,15 @@ class DB:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.lock = threading.RLock()
+
+    def _migrate(self) -> None:
+        """Добавляет новые колонки в старую базу, чтобы обновление сервера не теряло данные."""
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(clips)")}
+        for col in ("title", "transcript"):
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE clips ADD COLUMN {col} TEXT")
 
     def q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self.lock:

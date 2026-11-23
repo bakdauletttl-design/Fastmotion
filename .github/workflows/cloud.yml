@@ -17,6 +17,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pip install -r cloud/requirements.txt pytest
       - run: python -m pytest -q cloud/tests
+        env:
+          HYPECUT_SUBTITLES: "0"
       - run: docker build -f cloud/Dockerfile -t hypecut-cloud .
 
   mobile:

@@ -175,6 +175,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             src = from_key(c["channel"])
             out.append({"id": c["id"], "channel": src.name.lstrip("@"), "platform": src.platform,
                         "platform_title": src.title, "channel_key": c["channel"], "reason": c["reason"], "kind": c["kind"],
+                        "title": c["title"],
                         "created": c["created"], "duration": c["duration"], "moment": c["moment"],
                         "messages": json.loads(c["messages"] or "[]"),
                         "video": f"{base}/video", "thumb": f"{base}/thumb" if c["thumb"] else None,
