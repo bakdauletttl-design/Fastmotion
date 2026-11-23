@@ -39,4 +39,4 @@ pip install pytest && python -m pytest -q
 ```
 
 `HypeCut.exe` собирается в GitHub Actions (`.github/workflows/windows-build.yml`).
-Новый релиз выходит при пуше тега `v*`.
+Каждое изменение в ветке `main` автоматически публикует новый релиз.

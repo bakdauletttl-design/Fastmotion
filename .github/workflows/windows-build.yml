@@ -65,9 +65,14 @@ jobs:
           path: dist/HypeCut.exe
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        # каждый пуш в main (например, после мержа PR) публикует новую версию
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v0.1.${{ github.run_number }}
+          name: HypeCut 0.1.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
           files: dist/HypeCut.exe
           body: |
             **HypeCut для Windows.** Скачайте `HypeCut.exe`, положите в любую папку и запустите двойным щелчком.
