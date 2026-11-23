@@ -6,12 +6,19 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Modal, Pressable, RefreshControl, Share, View } from "react-native";
 import { api, Clip, withToken } from "../api";
 import { Button, c, Chips, H1, P, s, Tag } from "../ui";
+import { L, LOCALE } from "../i18n";
 
-const KIND: Record<string, string> = { chat: "ЧАТ", audio: "ЗВУК", manual: "МОМЕНТ", edit: "МОНТАЖ", viewers: "ЗРИТЕЛИ" };
+const KIND: Record<string, string> = {
+  chat: L("ЧАТ", "CHAT"),
+  audio: L("ЗВУК", "AUDIO"),
+  manual: L("МОМЕНТ", "MOMENT"),
+  edit: L("МОНТАЖ", "EDIT"),
+  viewers: L("ЗРИТЕЛИ", "VIEWERS"),
+};
 
 function shortReason(clip: Clip): string {
   const m = clip.reason.match(/x(\d+(?:\.\d)?)/);
-  return m ? `${KIND[clip.kind] ?? "МОМЕНТ"} x${Math.round(Number(m[1]))}` : KIND[clip.kind] ?? "МОМЕНТ";
+  return m ? `${KIND[clip.kind] ?? KIND.manual} x${Math.round(Number(m[1]))}` : KIND[clip.kind] ?? KIND.manual;
 }
 
 const time = (t: number) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`;
@@ -20,14 +27,14 @@ const time = (t: number) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).
 async function download(url: string) {
   const perm = await MediaLibrary.requestPermissionsAsync(true);
   if (!perm.granted) {
-    Alert.alert("Нет доступа к галерее", "Разреши HypeCut сохранять видео в настройках телефона.");
+    Alert.alert(L("Нет доступа к галерее", "No access to gallery"), L("Разреши HypeCut сохранять видео в настройках телефона.", "Allow HypeCut to save videos in your phone settings."));
     return;
   }
   const dir = new Directory(Paths.cache, "clips");
   if (!dir.exists) dir.create();
   const file: File = await File.downloadFileAsync(url, dir, { idempotent: true });
   await MediaLibrary.Asset.create(file.uri);
-  Alert.alert("Сохранено", "Клип в галерее телефона.");
+  Alert.alert(L("Сохранено", "Saved"), L("Клип в галерее телефона.", "The clip is in your gallery."));
 }
 
 function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
@@ -44,7 +51,7 @@ function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
     try {
       await download(url);
     } catch (e: any) {
-      Alert.alert("Не получилось скачать", String(e?.message ?? e));
+      Alert.alert(L("Не получилось скачать", "Download failed"), String(e?.message ?? e));
     } finally {
       setSaving(false);
     }
@@ -57,7 +64,7 @@ function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
           <P style={{ fontWeight: "700", fontSize: 17 }} numberOfLines={2}>{clip.title ?? clip.channel}</P>
           <P dim style={{ fontSize: 13 }}>{clip.title ? `${clip.channel} · ` : ""}{clip.platform_title} · {clip.reason}</P>
         </View>
-        <Button title="Закрыть" kind="text" onPress={onClose} />
+        <Button title={L("Закрыть", "Close")} kind="text" onPress={onClose} />
       </View>
       <View style={{ flex: 1, borderRadius: 24, overflow: "hidden", backgroundColor: c.card }}>
         <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls />
@@ -78,11 +85,11 @@ function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
           value={vertical ? "v" : "h"}
           onChange={(v) => setVertical(v === "v")}
         />
-        {clip.moment != null && <Tag>момент на {time(clip.moment)}</Tag>}
+        {clip.moment != null && <Tag>{L("момент на", "moment at")} {time(clip.moment)}</Tag>}
       </View>
       <View style={{ flexDirection: "row", gap: 12, marginTop: 16 }}>
-        <Button style={{ flex: 1 }} kind="outline" title="Скачать" busy={saving} onPress={save} />
-        <Button style={{ flex: 1 }} title="Поделиться" onPress={() => Share.share({ url, message: url })} />
+        <Button style={{ flex: 1 }} kind="outline" title={L("Скачать", "Save")} busy={saving} onPress={save} />
+        <Button style={{ flex: 1 }} title={L("Поделиться", "Share")} onPress={() => Share.share({ url, message: url })} />
       </View>
     </View>
   );
@@ -113,7 +120,7 @@ export default function Clips() {
   const channels = useMemo(() => {
     const keys: { id: string; title: string }[] = [];
     for (const cl of clips) if (!keys.find((k) => k.id === cl.channel_key)) keys.push({ id: cl.channel_key, title: cl.channel });
-    return [{ id: "all", title: "Все" }, ...keys];
+    return [{ id: "all", title: L("Все", "All") }, ...keys];
   }, [clips]);
   const shown = filter === "all" ? clips : clips.filter((x) => x.channel_key === filter);
   const fresh = seen ? clips.filter((x) => x.created > seen).length : 0;
@@ -130,16 +137,21 @@ export default function Clips() {
         ListHeaderComponent={
           <View style={{ gap: 10 }}>
             <View style={s.row}>
-              <H1>Клипы</H1>
-              {fresh > 0 && <Tag>+{fresh} НОВЫХ</Tag>}
+              <H1>{L("Клипы", "Clips")}</H1>
+              {fresh > 0 && <Tag>+{fresh} {L("НОВЫХ", "NEW")}</Tag>}
             </View>
             {channels.length > 2 && <Chips items={channels} value={filter} onChange={setFilter} />}
           </View>
         }
         ListEmptyComponent={
           <View style={[s.card, { marginTop: 8 }]}>
-            <P style={{ fontWeight: "700" }}>Пока пусто</P>
-            <P dim>Добавь каналы во вкладке «Каналы». Как только стример выйдет в эфир, клипы появятся здесь и в Telegram.</P>
+            <P style={{ fontWeight: "700" }}>{L("Пока пусто", "Nothing yet")}</P>
+            <P dim>
+              {L(
+                "Добавь каналы во вкладке «Каналы». Как только стример выйдет в эфир, клипы появятся здесь и в Telegram.",
+                "Add channels in the Channels tab. Once a streamer goes live, clips will appear here and in Telegram.",
+              )}
+            </P>
           </View>
         }
         renderItem={({ item }) => (
@@ -157,7 +169,7 @@ export default function Clips() {
             <P style={{ fontWeight: "700", marginTop: 8 }} numberOfLines={2}>{item.title ?? item.channel}</P>
             <P dim style={{ fontSize: 13 }} numberOfLines={1}>
               {item.title ? `${item.channel} · ` : `${item.platform_title} · `}
-              {new Date(item.created * 1000).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+              {new Date(item.created * 1000).toLocaleString(LOCALE, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
             </P>
           </Pressable>
         )}

@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { API_URL } from "./config";
+import { L, LANG } from "./i18n";
 
 export type Plan = {
   id: "trial" | "standard" | "pro";
@@ -93,12 +94,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     method,
     headers: {
       "Content-Type": "application/json",
+      "Accept-Language": LANG,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.detail ?? "Сервер не ответил");
+  if (!res.ok) throw new ApiError(res.status, data.detail ?? L("Сервер не ответил", "Server did not respond"));
   return data as T;
 }
 

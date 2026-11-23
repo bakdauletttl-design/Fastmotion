@@ -10,9 +10,15 @@ import Login from "./src/screens/Login";
 import Plans from "./src/screens/Plans";
 import Telegram from "./src/screens/Telegram";
 import { c } from "./src/ui";
+import { L } from "./src/i18n";
 
 type Tab = "clips" | "channels" | "plans" | "account";
-const TABS: [Tab, string][] = [["clips", "Клипы"], ["channels", "Каналы"], ["plans", "Тарифы"], ["account", "Профиль"]];
+const TABS: [Tab, string][] = [
+  ["clips", L("Клипы", "Clips")],
+  ["channels", L("Каналы", "Channels")],
+  ["plans", L("Тарифы", "Plans")],
+  ["account", L("Профиль", "Profile")],
+];
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);

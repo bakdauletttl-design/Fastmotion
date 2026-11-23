@@ -1,10 +1,11 @@
 import * as AppleAuthentication from "expo-apple-authentication";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useState } from "react";
-import { Alert, Platform, View } from "react-native";
+import { Alert, Linking, Platform, View } from "react-native";
 import { api, Me, setToken } from "../api";
-import { DEV_LOGIN, GOOGLE_IOS_CLIENT_ID, GOOGLE_WEB_CLIENT_ID } from "../config";
+import { API_URL, DEV_LOGIN, GOOGLE_IOS_CLIENT_ID, GOOGLE_WEB_CLIENT_ID } from "../config";
 import { Button, c, H1, P, Screen, Tag } from "../ui";
+import { L } from "../i18n";
 
 export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -24,7 +25,7 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
         onLogin(res.user);
       }
     } catch (e: any) {
-      if (e?.code !== "ERR_REQUEST_CANCELED") Alert.alert("Не получилось войти", String(e?.message ?? e));
+      if (e?.code !== "ERR_REQUEST_CANCELED") Alert.alert(L("Не получилось войти", "Sign-in failed"), String(e?.message ?? e));
     } finally {
       setBusy(null);
     }
@@ -59,10 +60,13 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
           Hype<H1 style={{ fontSize: 56, color: c.accent }}>Cut</H1>
         </H1>
         <P dim style={{ fontSize: 18, lineHeight: 26, marginTop: 8 }}>
-          Самые яркие моменты стримов с Twitch, YouTube, Kick, VK и TikTok. Сами находятся, сами режутся и сразу приходят в Telegram.
+          {L(
+            "Самые яркие моменты стримов с Twitch, YouTube, Kick, VK и TikTok. Сами находятся, сами режутся и сразу приходят в Telegram.",
+            "The best moments from Twitch, YouTube, Kick, VK and TikTok streams. Found, cut and sent to Telegram automatically.",
+          )}
         </P>
         <View style={{ flexDirection: "row", gap: 8, marginTop: 28 }}>
-          {[["ЧАТ x6", "#1f6b4f", 0], ["ЗВУК", "#4b2c6b", 22], ["ХАЙП", "#6b4a1f", 0]].map(([t, col, top]) => (
+          {[[L("ЧАТ x6", "CHAT x6"), "#1f6b4f", 0], [L("ЗВУК", "AUDIO"), "#4b2c6b", 22], [L("ХАЙП", "HYPE"), "#6b4a1f", 0]].map(([t, col, top]) => (
             <View key={t as string} style={{ flex: 1, aspectRatio: 9 / 12, marginTop: top as number, borderRadius: 18,
                                              backgroundColor: col as string, padding: 9, opacity: 0.9 }}>
               <Tag>{t}</Tag>
@@ -80,14 +84,21 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
             onPress={signInApple}
           />
         )}
-        <Button title="Продолжить с Google" onPress={google} busy={busy === "google"}
+        <Button title={L("Продолжить с Google", "Continue with Google")} onPress={google} busy={busy === "google"}
                 kind={apple ? "outline" : "primary"} />
         {DEV_LOGIN && (
-          <Button title="Тестовый вход" kind="text" busy={busy === "dev"}
+          <Button title={L("Тестовый вход", "Test sign-in")} kind="text" busy={busy === "dev"}
                   onPress={() => run("dev", () => api.loginDev("tester"))} />
         )}
         <P dim style={{ fontSize: 12, textAlign: "center", marginTop: 4 }}>
-          7 дней бесплатно · без карты. Продолжая, вы принимаете условия использования.
+          {L("7 дней бесплатно · без карты. Продолжая, вы принимаете ", "7 days free · no card. By continuing you accept the ")}
+          <P dim style={{ fontSize: 12, textDecorationLine: "underline" }} onPress={() => Linking.openURL(`${API_URL}/terms`)}>
+            {L("условия использования", "terms of use")}
+          </P>
+          {" · "}
+          <P dim style={{ fontSize: 12, textDecorationLine: "underline" }} onPress={() => Linking.openURL(`${API_URL}/privacy`)}>
+            {L("конфиденциальность", "privacy")}
+          </P>
         </P>
       </View>
     </Screen>

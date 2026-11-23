@@ -1,6 +1,7 @@
 // Стиль HypeCut: тёмный фон, светлый текст, изумрудный акцент
 import React from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextStyle, View, ViewStyle } from "react-native";
+import { L } from "./i18n";
 
 // Цвета синхронизированы с фирменными токенами HypeCut (hypecut/static/brand.css), акцент изумрудный
 export const c = {
@@ -44,8 +45,12 @@ export function H1(p: { children: React.ReactNode; style?: TextStyle }) {
   return <Text style={[s.h1, p.style]}>{p.children}</Text>;
 }
 
-export function P(p: { children: React.ReactNode; dim?: boolean; style?: TextStyle; numberOfLines?: number }) {
-  return <Text numberOfLines={p.numberOfLines} style={[s.p, p.dim && { color: c.dim }, p.style]}>{p.children}</Text>;
+export function P(p: { children: React.ReactNode; dim?: boolean; style?: TextStyle; numberOfLines?: number; onPress?: () => void }) {
+  return (
+    <Text numberOfLines={p.numberOfLines} onPress={p.onPress} style={[s.p, p.dim && { color: c.dim }, p.style]}>
+      {p.children}
+    </Text>
+  );
 }
 
 // маленькая зелёная плашка, например «PRO» или «LIVE»
@@ -80,11 +85,11 @@ export const s = StyleSheet.create({
 
 // Площадки: название и фирменный цвет для маленькой метки
 export const PLATFORMS: { id: "twitch" | "youtube" | "kick" | "vk" | "tiktok"; title: string; color: string; hint: string }[] = [
-  { id: "twitch", title: "Twitch", color: "#9D6BFF", hint: "ник или ссылка" },
-  { id: "youtube", title: "YouTube", color: "#FF4E45", hint: "@канал или ссылка" },
-  { id: "kick", title: "Kick", color: "#53FC18", hint: "ник или ссылка" },
-  { id: "vk", title: "VK Видео", color: "#0077FF", hint: "ник или ссылка" },
-  { id: "tiktok", title: "TikTok", color: "#FE2C55", hint: "@ник или ссылка" },
+  { id: "twitch", title: "Twitch", color: "#9D6BFF", hint: L("ник или ссылка", "name or link") },
+  { id: "youtube", title: "YouTube", color: "#FF4E45", hint: L("@канал или ссылка", "@channel or link") },
+  { id: "kick", title: "Kick", color: "#53FC18", hint: L("ник или ссылка", "name or link") },
+  { id: "vk", title: L("VK Видео", "VK Video"), color: "#0077FF", hint: L("ник или ссылка", "name or link") },
+  { id: "tiktok", title: "TikTok", color: "#FE2C55", hint: L("@ник или ссылка", "@name or link") },
 ];
 
 export const platformColor = (id: string) => PLATFORMS.find((p) => p.id === id)?.color ?? c.accent;

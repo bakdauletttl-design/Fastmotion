@@ -389,3 +389,10 @@ def test_twitch_search_avatars_and_viewer_signal(env):
     trig = ChannelWorker.viewer_trigger(3, 1000)
     assert trig.kind == "viewers" and trig.at == 970
     assert Twitch("", "").search("x") == []
+
+
+def test_errors_in_english_for_english_phones(env):
+    cfg, db, tg = env
+    client = TestClient(create_app(cfg, db))
+    assert client.get("/me").json()["detail"] == "Нужно войти"
+    assert client.get("/me", headers={"Accept-Language": "en"}).json()["detail"] == "Please sign in"

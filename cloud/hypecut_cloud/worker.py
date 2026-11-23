@@ -17,7 +17,7 @@ from hypecut.detector import AudioPeakDetector, ChatSpikeDetector, Trigger
 
 from . import enhance
 from .config import Config
-from .db import DB
+from .db import DB, is_en
 from .plans import can_receive
 from .sources import Source, from_key
 from .telegram_api import TelegramAPI
@@ -84,10 +84,17 @@ class Dispatcher:
             for u in users:
                 if u["telegram_chat_id"]:
                     await self.api.send_message(u["telegram_chat_id"],
-                                                f"🔴 {name} в эфире на {src.title}. Ловлю лучшие моменты.")
+                                                f"🔴 {name} в эфире на {src.title}. Ловлю лучшие моменты."
+                                                if not is_en(u) else
+                                                f"🔴 {name} is live on {src.title}. Catching the best moments.")
         if self.push:
-            await self.push.send([u["id"] for u in users], f"🔴 {name} в эфире",
-                                 f"{src.title}: HypeCut уже смотрит стрим и пришлёт клипы", {"channel": channel})
+            for en in (False, True):
+                group = [u["id"] for u in users if is_en(u) == en]
+                if group:
+                    await self.push.send(group, f"🔴 {name} " + ("is live" if en else "в эфире"),
+                                         f"{src.title}: " + ("HypeCut is watching and will send clips" if en else
+                                                             "HypeCut уже смотрит стрим и пришлёт клипы"),
+                                         {"channel": channel})
         return len(users)
 
     def needs_vertical(self, channel: str) -> bool:

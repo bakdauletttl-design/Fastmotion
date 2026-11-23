@@ -4,6 +4,7 @@ import Purchases, { PurchasesPackage } from "react-native-purchases";
 import { api, Me, Plan } from "../api";
 import { REVENUECAT_ANDROID_KEY, REVENUECAT_IOS_KEY } from "../config";
 import { Button, c, H1, P, s, Tag } from "../ui";
+import { L } from "../i18n";
 
 // Оплата идёт через App Store / Google Play. RevenueCat сообщает серверу о покупке,
 // и сервер сам включает тариф.
@@ -19,9 +20,19 @@ function setupPurchases(userId: number): boolean {
 }
 
 const FEATURES: Record<string, string[]> = {
-  trial: ["1 канал", "до 5 клипов за стрим", "клипы в Telegram"],
-  standard: ["3 канала", "до 20 клипов за стрим", "1080p", "вертикальные клипы для TikTok, Shorts, Reels"],
-  pro: ["10 каналов", "клипы без лимита", "всё из Standard", "клипы режутся в первую очередь"],
+  trial: [L("1 канал", "1 channel"), L("до 5 клипов за стрим", "up to 5 clips per stream"), L("клипы в Telegram", "clips in Telegram")],
+  standard: [
+    L("3 канала", "3 channels"),
+    L("до 20 клипов за стрим", "up to 20 clips per stream"),
+    L("вертикальные клипы с субтитрами для TikTok, Shorts, Reels", "vertical clips with captions for TikTok, Shorts, Reels"),
+    L("заголовки к клипам", "clip titles"),
+  ],
+  pro: [
+    L("10 каналов", "10 channels"),
+    L("клипы без лимита", "unlimited clips"),
+    L("всё из Standard", "everything in Standard"),
+    L("клипы режутся в первую очередь", "priority processing"),
+  ],
 };
 
 export default function Plans({ me, onChange }: { me: Me; onChange: () => void }) {
@@ -49,7 +60,7 @@ export default function Plans({ me, onChange }: { me: Me; onChange: () => void }
   async function buy(planId: string) {
     const pkg = packages[planId];
     if (!pkg) {
-      Alert.alert("Оплата скоро появится", "Покупки ещё не подключены в магазине приложений.");
+      Alert.alert(L("Оплата скоро появится", "Payments coming soon"), L("Покупки ещё не подключены в магазине приложений.", "Purchases are not set up in the store yet."));
       return;
     }
     setBusy(planId);
@@ -57,9 +68,9 @@ export default function Plans({ me, onChange }: { me: Me; onChange: () => void }
       await Purchases.purchasePackage(pkg);
       // сервер получает подтверждение от магазина через несколько секунд
       setTimeout(onChange, 3000);
-      Alert.alert("Спасибо!", "Тариф включится через несколько секунд.");
+      Alert.alert(L("Спасибо!", "Thank you!"), L("Тариф включится через несколько секунд.", "Your plan will be active in a few seconds."));
     } catch (e: any) {
-      if (!e?.userCancelled) Alert.alert("Оплата не прошла", String(e?.message ?? e));
+      if (!e?.userCancelled) Alert.alert(L("Оплата не прошла", "Payment failed"), String(e?.message ?? e));
     } finally {
       setBusy(null);
     }
@@ -73,20 +84,20 @@ export default function Plans({ me, onChange }: { me: Me; onChange: () => void }
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 32, gap: 14 }}>
-      <H1>Тарифы</H1>
+      <H1>{L("Тарифы", "Plans")}</H1>
       {plans.map((p) => {
         const current = me.plan?.id === p.id;
         const best = p.id === "pro";
-        const price = packages[p.id]?.product.priceString ?? (p.price_usd ? `$${p.price_usd}` : "Бесплатно");
+        const price = packages[p.id]?.product.priceString ?? (p.price_usd ? `$${p.price_usd}` : L("Бесплатно", "Free"));
         return (
           <View key={p.id} style={[s.card, best && { borderColor: c.accent }]}>
             <View style={s.row}>
               <P style={{ fontSize: 20, fontWeight: "800" }}>{p.title}</P>
-              {current ? <Tag>ТВОЙ ТАРИФ</Tag> : best ? <Tag>ЛУЧШИЙ</Tag> : null}
+              {current ? <Tag>{L("ТВОЙ ТАРИФ", "YOUR PLAN")}</Tag> : best ? <Tag>{L("ЛУЧШИЙ", "BEST")}</Tag> : null}
             </View>
             <P style={{ fontSize: 28, fontWeight: "800", marginTop: 6 }}>
               {price}
-              {p.price_usd ? <P dim> / месяц</P> : null}
+              {p.price_usd ? <P dim> / {L("месяц", "month")}</P> : null}
             </P>
             <View style={{ marginTop: 10, gap: 6 }}>
               {(FEATURES[p.id] ?? []).map((f) => (
@@ -97,15 +108,18 @@ export default function Plans({ me, onChange }: { me: Me; onChange: () => void }
               ))}
             </View>
             {p.id !== "trial" && !current && (
-              <Button style={{ marginTop: 16 }} title={`Выбрать ${p.title}`} busy={busy === p.id}
+              <Button style={{ marginTop: 16 }} title={`${L("Выбрать", "Choose")} ${p.title}`} busy={busy === p.id}
                       kind={best ? "primary" : "outline"} onPress={() => buy(p.id)} />
             )}
           </View>
         );
       })}
-      <Button title="Восстановить покупки" kind="text" onPress={restore} />
+      <Button title={L("Восстановить покупки", "Restore purchases")} kind="text" onPress={restore} />
       <P dim style={{ fontSize: 12, textAlign: "center" }}>
-        Подписка продлевается автоматически. Отменить можно в настройках App Store или Google Play.
+        {L(
+          "Подписка продлевается автоматически. Отменить можно в настройках App Store или Google Play.",
+          "Subscriptions renew automatically. Cancel any time in App Store or Google Play settings.",
+        )}
       </P>
     </ScrollView>
   );

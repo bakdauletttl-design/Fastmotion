@@ -62,7 +62,8 @@
           "color": "#2EE59D",
           "defaultChannel": "clips"
         }
-      ]
+      ],
+      "expo-localization"
     ],
     "scheme": "hypecut",
     "backgroundColor": "#07080A",

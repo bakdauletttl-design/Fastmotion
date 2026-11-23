@@ -8,7 +8,7 @@ from typing import Callable
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pathlib import Path
 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import auth
@@ -32,6 +32,21 @@ class DevIn(BaseModel):
     name: str = "tester"
 
 
+EN = {
+    "На этом тарифе больше каналов нельзя": "Your plan does not allow more channels",
+    "Стример попросил не нарезать этот канал": "This streamer asked not to be clipped",
+    "Нужна подписка": "A subscription is required",
+    "Не похоже на канал. Пример: twitch.tv/имя или youtube.com/@имя":
+        "That does not look like a channel. Example: twitch.tv/name or youtube.com/@name",
+    "Неверный токен уведомлений": "Invalid notification token",
+    "Аккаунт не найден": "Account not found",
+    "Нужно войти": "Please sign in",
+    "Клип не найден": "Clip not found",
+    "Файл уже удалён с сервера, он есть в Telegram": "The file was removed from the server; it is still in Telegram",
+    "Бот ещё не настроен на сервере": "The bot is not set up on the server yet",
+}
+
+
 class PushIn(BaseModel):
     token: str
 
@@ -45,6 +60,18 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
                status: Callable[[str], dict] | None = None, twitch: Twitch | None = None) -> FastAPI:
     app = FastAPI(title="HypeCut Cloud", version="0.1")
     twitch = twitch or Twitch()
+
+    def remember_lang(user, request: Request):
+        db.set_lang(user["id"], request.headers.get("accept-language"))
+        return db.user(user["id"])
+
+    @app.exception_handler(HTTPException)
+    async def localized(request: Request, exc: HTTPException):
+        # приложение присылает язык телефона; не русским отвечаем по-английски
+        detail = exc.detail
+        if isinstance(detail, str) and not request.headers.get("accept-language", "ru").startswith("ru"):
+            detail = EN.get(detail, detail)
+        return JSONResponse({"detail": detail}, status_code=exc.status_code, headers=exc.headers)
 
     def with_avatars(items: list[dict]) -> list[dict]:
         """Подставляет аватарки Twitch одним запросом на весь список."""
@@ -127,26 +154,26 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
 
     # ---------- вход ----------
     @app.post("/auth/google")
-    def login_google(body: GoogleIn):
+    def login_google(body: GoogleIn, request: Request):
         try:
             c = auth.verify_google(body.id_token, cfg.google_client_ids)
         except auth.AuthError as e:
             raise HTTPException(401, str(e))
-        return session(db.upsert_user("google", c["sub"], c.get("email"), c.get("name")))
+        return session(remember_lang(db.upsert_user("google", c["sub"], c.get("email"), c.get("name")), request))
 
     @app.post("/auth/apple")
-    def login_apple(body: AppleIn):
+    def login_apple(body: AppleIn, request: Request):
         try:
             c = auth.verify_apple(body.identity_token, cfg.apple_bundle_ids)
         except auth.AuthError as e:
             raise HTTPException(401, str(e))
-        return session(db.upsert_user("apple", c["sub"], c.get("email"), body.name))
+        return session(remember_lang(db.upsert_user("apple", c["sub"], c.get("email"), body.name), request))
 
     @app.post("/auth/dev")
-    def login_dev(body: DevIn):
+    def login_dev(body: DevIn, request: Request):
         if not cfg.dev_login:
             raise HTTPException(404)
-        return session(db.upsert_user("dev", body.name, None, body.name))
+        return session(remember_lang(db.upsert_user("dev", body.name, None, body.name), request))
 
     # ---------- аккаунт ----------
     @app.get("/me")

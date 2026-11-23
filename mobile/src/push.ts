@@ -2,6 +2,7 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { api } from "./api";
+import { L } from "./i18n";
 
 // Показываем уведомление, даже когда приложение открыто
 Notifications.setNotificationHandler({
@@ -18,7 +19,7 @@ export async function registerPush(): Promise<void> {
   try {
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync("clips", {
-        name: "Клипы и эфиры",
+        name: L("Клипы и эфиры", "Clips and live alerts"),
         importance: Notifications.AndroidImportance.HIGH,
         lightColor: "#2EE59D",
       });

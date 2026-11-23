@@ -10,6 +10,18 @@ from pathlib import Path
 from .plans import TRIAL_DAYS, Plan, effective_plan
 from .sources import parse_source
 
+RU_LANGS = ("ru", "uk", "be", "kk", "uz", "ky", "tg", "hy", "az")
+
+
+def lang_of(code: str | None) -> str:
+    """Код языка телефона или Telegram -> ru (Россия и СНГ) или en (все остальные)."""
+    return "ru" if (code or "ru").lower()[:2] in RU_LANGS else "en"
+
+
+def is_en(user) -> bool:
+    return bool(user is not None and user["lang"] == "en")
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
@@ -23,6 +35,7 @@ CREATE TABLE IF NOT EXISTS users (
     plan_until REAL,
     telegram_chat_id INTEGER UNIQUE,
     telegram_username TEXT,
+    lang TEXT,                       -- ru | en: язык бота, подписей и уведомлений
     UNIQUE (provider, provider_sub)
 );
 CREATE TABLE IF NOT EXISTS link_tokens (
@@ -103,10 +116,11 @@ class DB:
 
     def _migrate(self) -> None:
         """Добавляет новые колонки в старую базу, чтобы обновление сервера не теряло данные."""
-        have = {r[1] for r in self.conn.execute("PRAGMA table_info(clips)")}
-        for col in ("title", "transcript"):
-            if col not in have:
-                self.conn.execute(f"ALTER TABLE clips ADD COLUMN {col} TEXT")
+        for table, cols in (("clips", ("title", "transcript")), ("users", ("lang",))):
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for col in cols:
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
 
     def q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self.lock:
@@ -133,6 +147,10 @@ class DB:
         uid = self.x("INSERT INTO users (provider, provider_sub, email, name, created, trial_until) "
                      "VALUES (?,?,?,?,?,?)", (provider, sub, email, name, now, now + TRIAL_DAYS * 86400))
         return self.user(uid)
+
+    def set_lang(self, uid: int, code: str | None) -> None:
+        if code:
+            self.x("UPDATE users SET lang=? WHERE id=?", (lang_of(code), uid))
 
     def user(self, uid: int) -> sqlite3.Row | None:
         return self.one("SELECT * FROM users WHERE id=?", (uid,))
