@@ -136,5 +136,6 @@ def create_app(settings: Settings, run_engine: bool = True) -> FastAPI:
                 return {"ok": True}
         raise HTTPException(404)
 
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
     app.mount("/clips", StaticFiles(directory=settings.clips_dir), name="clips")
     return app

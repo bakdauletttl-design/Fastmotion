@@ -1,0 +1,22 @@
+/* Фирменные токены HypeCut. Синхронизированы с brand/tokens.json.
+   Акцент задаётся одной темой; остальные цвета общие. */
+:root {
+  --bg:#07080A; --surface:#0F1113; --surface-2:#161A1D; --surface-3:#1E2327;
+  --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.16);
+  --text:#F4F6F3; --muted:#8C948F; --dim:#565D59;
+  --danger:#FF5A5A;
+  --font-display:"Unbounded", "Inter", system-ui, sans-serif;
+  --font-body:"Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --r-sm:10px; --r-md:14px; --r-lg:20px; --r-pill:999px;
+  --t-fast:140ms; --t-base:220ms; --ease:cubic-bezier(.2,.8,.2,1);
+  --shadow-card:0 1px 0 rgba(255,255,255,.04) inset, 0 12px 32px rgba(0,0,0,.45);
+
+  /* Акцент по умолчанию: изумрудный */
+  --accent-rgb:46,229,157; --accent:#2EE59D; --accent-hover:#5CF0B6; --accent-ink:#00140C;
+}
+[data-theme="violet"] { --accent-rgb:157,107,255; --accent:#9D6BFF; --accent-hover:#B48EFF; --accent-ink:#0D0420; }
+[data-theme="orange"] { --accent-rgb:255,106,43;  --accent:#FF6A2B; --accent-hover:#FF8A57; --accent-ink:#1A0700; }
+:root, [data-theme] {
+  --accent-soft:rgba(var(--accent-rgb),.12);
+  --accent-glow:rgba(var(--accent-rgb),.35);
+}
