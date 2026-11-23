@@ -49,11 +49,28 @@ def env(tmp_path):
 
 
 def test_normalize_channel():
-    assert normalize_channel("https://www.twitch.tv/Some_Streamer?x=1") == "some_streamer"
-    assert normalize_channel("@xQcOW") == "xqcow"
-    assert normalize_channel("twitch.tv/abcd/videos") == "abcd"
+    assert normalize_channel("https://www.twitch.tv/Some_Streamer?x=1") == "twitch:some_streamer"
+    assert normalize_channel("@xQcOW") == "twitch:xqcow"
+    assert normalize_channel("twitch.tv/abcd/videos") == "twitch:abcd"
     assert normalize_channel("привет") is None
     assert normalize_channel("a") is None
+
+
+def test_other_platforms():
+    from hypecut_cloud.sources import from_key, parse_source
+    assert normalize_channel("https://www.youtube.com/@NightOwl/live") == "youtube:@nightowl"
+    assert normalize_channel("youtube.com/channel/UCX6OQ3DkcsbYNE6H8uQQuVA") == "youtube:UCX6OQ3DkcsbYNE6H8uQQuVA"
+    assert normalize_channel("https://kick.com/Night-Owl") == "kick:night-owl"
+    assert normalize_channel("https://live.vkvideo.ru/nightowl") == "vk:nightowl"
+    assert normalize_channel("https://vkplay.live/nightowl") == "vk:nightowl"
+    assert normalize_channel("https://www.tiktok.com/@night.owl/live") == "tiktok:@night.owl"
+    assert normalize_channel("nightowl", "youtube") == "youtube:@nightowl"
+    assert normalize_channel("nightowl", "kick") == "kick:nightowl"
+    assert normalize_channel("https://example.com/nightowl") is None
+    assert from_key("youtube:@nightowl").url == "https://www.youtube.com/@nightowl/live"
+    assert from_key("tiktok:@night.owl").url == "https://www.tiktok.com/@night.owl/live"
+    assert parse_source("kick.com/abc").has_chat is False
+    assert parse_source("twitch.tv/abcd").has_chat is True
 
 
 def test_effective_plan():
@@ -83,10 +100,11 @@ def test_app_flow_login_link_follow(env):
     assert "подключён" in tg.messages[-1][1]
     assert client.get("/me", headers=h).json()["telegram_linked"] is True
 
-    assert client.post("/channels", json={"channel": "twitch.tv/StreamerOne"}, headers=h).json() == ["streamerone"]
+    assert client.post("/channels", json={"channel": "twitch.tv/StreamerOne"}, headers=h).json()[0]["key"] == "twitch:streamerone"
+    assert client.get("/channels", headers=h).json()[0]["live"] is False
     # пробный тариф: только 1 канал
     assert client.post("/channels", json={"channel": "two"}, headers=h).status_code == 400  # «two» слишком короткий
-    assert client.post("/channels", json={"channel": "streamertwo"}, headers=h).status_code == 403
+    assert client.post("/channels", json={"channel": "streamertwo", "platform": "youtube"}, headers=h).status_code == 403
     assert client.get("/me").status_code == 401
 
     # ссылку нельзя использовать второй раз
@@ -100,12 +118,12 @@ def test_bot_only_user_then_merge_into_app_account(env):
     asyncio.run(bot.handle(msg(42, "/start")))
     asyncio.run(bot.handle(msg(42, "https://twitch.tv/coolguy")))
     assert "слежу за coolguy" in tg.messages[-1][1]
-    assert db.wanted_channels() == [("coolguy", False)]
+    assert db.wanted_channels() == [("twitch:coolguy", False)]
 
     app_user = db.upsert_user("google", "g1", "a@b.c")
     token = db.new_link_token(app_user["id"])
     asyncio.run(bot.handle(msg(42, f"/start {token}")))
-    assert db.follows(app_user["id"]) == ["coolguy"]
+    assert db.follows(app_user["id"]) == ["twitch:coolguy"]
     assert db.user_by_chat(42)["id"] == app_user["id"]
     assert db.one("SELECT COUNT(*) n FROM users")["n"] == 1
 
@@ -123,9 +141,9 @@ def test_billing_webhook_and_block(env):
                 headers={"Authorization": "Bearer rc"})
     assert db.plan_of(db.user(u["id"])).id == "trial"  # вернулся пробный, пока он не истёк
 
-    db.follow(u["id"], "badchan")
+    db.follow(u["id"], "twitch:badchan")
     assert client.post("/admin/block", json={"channel": "badchan"}, headers={"X-Admin-Token": "adm"}).json()["ok"]
-    assert db.follows(u["id"]) == [] and db.follow(u["id"], "badchan") == "blocked"
+    assert db.follows(u["id"]) == [] and db.follow(u["id"], "twitch:badchan") == "blocked"
 
 
 def _make_segments(tmp: Path) -> list[Segment]:
@@ -156,13 +174,13 @@ def test_clip_made_once_and_sent_to_all_followers_with_limits(env, tmp_path):
         db.x("UPDATE users SET telegram_chat_id=? WHERE id=?", (chat, u["id"]))
         if plan:
             db.set_plan(u["id"], plan, time.time() + 86400)
-        assert db.follow(u["id"], "streamer") == "ok"
+        assert db.follow(u["id"], "youtube:@streamer") == "ok"
         users.append(u)
     # у второго пробный период закончился: ему клипы не приходят
     db.x("UPDATE users SET trial_until=0 WHERE id=?", (users[1]["id"],))
 
     disp = Dispatcher(cfg, db, tg)
-    w = ChannelWorker(cfg, db, disp, "streamer", recorder=FakeRecorder(segs))
+    w = ChannelWorker(cfg, db, disp, "youtube:@streamer", recorder=FakeRecorder(segs))
     clip_id = asyncio.run(w.make_clip(Trigger(at=segs[-1].end, reason="чат x5", score=5, kind="chat")))
     assert clip_id
     c = db.clip(clip_id)
@@ -175,6 +193,7 @@ def test_clip_made_once_and_sent_to_all_followers_with_limits(env, tmp_path):
     tok = issue_session(users[0]["id"], SECRET)
     clips = client.get("/clips", headers={"Authorization": f"Bearer {tok}"}).json()
     assert clips[0]["id"] == clip_id and clips[0]["vertical"]
+    assert clips[0]["platform"] == "youtube" and clips[0]["channel"] == "streamer"
     assert client.get(f"/clips/{clip_id}/video?token={tok}").status_code == 200
     other = issue_session(users[1]["id"], SECRET)
     assert client.get(f"/clips/{clip_id}/video?token={other}").status_code == 404
@@ -200,11 +219,11 @@ def test_manager_starts_and_stops_workers(env):
         m = Manager(cfg, db, Dispatcher(cfg, db, tg), worker_factory=W)
         u = db.upsert_user("dev", "x")
         db.x("UPDATE users SET telegram_chat_id=9 WHERE id=?", (u["id"],))
-        db.follow(u["id"], "chan_a")
+        db.follow(u["id"], "kick:chan_a")
         await m.reconcile()
-        assert list(m.workers) == ["chan_a"]
-        w = m.workers["chan_a"]
-        db.unfollow(u["id"], "chan_a")
+        assert list(m.workers) == ["kick:chan_a"]
+        w = m.workers["kick:chan_a"]
+        db.unfollow(u["id"], "kick:chan_a")
         await m.reconcile()
         assert m.workers == {} and not w.running
 

@@ -7,14 +7,17 @@ from datetime import datetime
 
 from .config import Config
 from .db import DB, normalize_channel
+from .sources import from_key
 from .plans import PLANS
 from .telegram_api import TelegramAPI
 
 log = logging.getLogger(__name__)
 
 HELP = (
-    "Я HypeCut. Я сам смотрю Twitch-стримы, нахожу самые яркие моменты и присылаю готовые клипы сюда.\n\n"
-    "Пришли ник стримера или ссылку на канал, например twitch.tv/имя, и я начну следить.\n\n"
+    "Я HypeCut. Я сам смотрю стримы, нахожу самые яркие моменты и присылаю готовые клипы сюда.\n\n"
+    "Пришли ссылку на канал, и я начну следить. Подходят Twitch, YouTube, Kick, VK Видео и TikTok, например:\n"
+    "twitch.tv/имя\nyoutube.com/@имя\nkick.com/имя\nlive.vkvideo.ru/имя\ntiktok.com/@имя\n"
+    "Просто ник без ссылки я ищу на Twitch.\n\n"
     "/list — мои каналы\n"
     "/remove имя — перестать следить\n"
     "/plan — мой тариф\n"
@@ -28,6 +31,12 @@ FOLLOW_TEXT = {
     "blocked": "Стример {ch} попросил не нарезать его канал. Выбери другой.",
     "no_plan": "Пробный период закончился. Оформи подписку в приложении HypeCut, и клипы снова будут приходить.",
 }
+
+
+def pretty(key: str) -> str:
+    """«youtube:@nightowl» -> «nightowl (YouTube)»."""
+    src = from_key(key)
+    return f"{src.name.lstrip('@')} ({src.title})"
 
 
 class Bot:
@@ -66,26 +75,26 @@ class Bot:
             await self.api.send_message(chat_id, HELP, self._app_buttons())
         elif cmd == "/list":
             chans = self.db.follows(user["id"])
-            text = ("Твои каналы:\n" + "\n".join(f"• {c}" for c in chans)) if chans else \
+            text = ("Твои каналы:\n" + "\n".join(f"• {pretty(c)}" for c in chans)) if chans else \
                 "Ты пока ни за кем не следишь. Пришли ник стримера."
             await self.api.send_message(chat_id, text)
         elif cmd == "/remove":
             ch = normalize_channel(arg)
             if ch and self.db.unfollow(user["id"], ch):
-                await self.api.send_message(chat_id, f"Больше не слежу за {ch}.")
+                await self.api.send_message(chat_id, f"Больше не слежу за {pretty(ch)}.")
                 self._changed()
             else:
-                await self.api.send_message(chat_id, "Напиши так: /remove имя_канала")
+                await self.api.send_message(chat_id, "Напиши так: /remove ссылка_на_канал (список: /list)")
         elif cmd == "/plan":
             await self.api.send_message(chat_id, self._plan_text(user), self._app_buttons())
         elif cmd == "/add" or not cmd.startswith("/"):
             ch = normalize_channel(arg if cmd == "/add" else text)
             if not ch:
-                await self.api.send_message(chat_id, "Не понял канал. Пришли ник стримера или ссылку twitch.tv/имя.")
+                await self.api.send_message(chat_id, "Не понял канал. Пришли ссылку, например twitch.tv/имя или youtube.com/@имя.")
                 return
             res = self.db.follow(user["id"], ch)
             plan = self.db.plan_of(user)
-            await self.api.send_message(chat_id, FOLLOW_TEXT[res].format(ch=ch, n=plan.channels if plan else 0),
+            await self.api.send_message(chat_id, FOLLOW_TEXT[res].format(ch=pretty(ch), n=plan.channels if plan else 0),
                                         self._app_buttons() if res in ("limit", "no_plan") else None)
             if res == "ok":
                 self._changed()
@@ -99,7 +108,7 @@ class Bot:
                 await self.api.send_message(chat_id, "Ссылка устарела. Открой приложение HypeCut и нажми «Подключить Telegram» ещё раз.")
                 return
             chans = self.db.follows(user["id"])
-            tail = f"Слежу за: {', '.join(chans)}." if chans else "Добавь каналы в приложении или пришли ник стримера сюда."
+            tail = f"Слежу за: {', '.join(pretty(c) for c in chans)}." if chans else "Добавь каналы в приложении или пришли ник стримера сюда."
             await self.api.send_message(chat_id, f"Готово! Аккаунт HypeCut подключён. Клипы будут приходить сюда.\n{tail}")
             self._changed()
             return

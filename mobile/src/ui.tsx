@@ -1,6 +1,6 @@
 // Стиль HypeCut: тёмный фон, светлый текст, изумрудный акцент
 import React from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextStyle, View, ViewStyle } from "react-native";
 
 // Цвета синхронизированы с фирменными токенами HypeCut (hypecut/static/brand.css), акцент изумрудный
 export const c = {
@@ -44,8 +44,8 @@ export function H1(p: { children: React.ReactNode; style?: TextStyle }) {
   return <Text style={[s.h1, p.style]}>{p.children}</Text>;
 }
 
-export function P(p: { children: React.ReactNode; dim?: boolean; style?: TextStyle }) {
-  return <Text style={[s.p, p.dim && { color: c.dim }, p.style]}>{p.children}</Text>;
+export function P(p: { children: React.ReactNode; dim?: boolean; style?: TextStyle; numberOfLines?: number }) {
+  return <Text numberOfLines={p.numberOfLines} style={[s.p, p.dim && { color: c.dim }, p.style]}>{p.children}</Text>;
 }
 
 // маленькая зелёная плашка, например «PRO» или «LIVE»
@@ -77,3 +77,32 @@ export const s = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   card: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 20, padding: 16 },
 });
+
+// Площадки: название и фирменный цвет для маленькой метки
+export const PLATFORMS: { id: "twitch" | "youtube" | "kick" | "vk" | "tiktok"; title: string; color: string; hint: string }[] = [
+  { id: "twitch", title: "Twitch", color: "#9D6BFF", hint: "ник или ссылка" },
+  { id: "youtube", title: "YouTube", color: "#FF4E45", hint: "@канал или ссылка" },
+  { id: "kick", title: "Kick", color: "#53FC18", hint: "ник или ссылка" },
+  { id: "vk", title: "VK Видео", color: "#0077FF", hint: "ник или ссылка" },
+  { id: "tiktok", title: "TikTok", color: "#FE2C55", hint: "@ник или ссылка" },
+];
+
+export const platformColor = (id: string) => PLATFORMS.find((p) => p.id === id)?.color ?? c.accent;
+
+// Переключатели-«таблетки»: площадка, фильтр по каналу
+export function Chips<T extends string>(p: { items: { id: T; title: string }[]; value: T; onChange: (v: T) => void }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+      {p.items.map((it) => {
+        const on = it.id === p.value;
+        return (
+          <Pressable key={it.id} onPress={() => p.onChange(it.id)}
+                     style={{ paddingHorizontal: 14, height: 34, borderRadius: 999, justifyContent: "center",
+                              backgroundColor: on ? c.accent : c.card, borderWidth: 1, borderColor: on ? c.accent : c.line }}>
+            <Text style={{ color: on ? c.onAccent : c.dim, fontWeight: "700", fontSize: 13 }}>{it.title}</Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}

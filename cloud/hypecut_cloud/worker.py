@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import subprocess
 import time
@@ -9,7 +10,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-from hypecut.capture import StreamRecorder
+from hypecut.capture import StreamOffline, StreamRecorder
 from hypecut.chat import chat_messages
 from hypecut.clipper import build_clip, make_thumbnail, mean_volume
 from hypecut.detector import AudioPeakDetector, ChatSpikeDetector, Trigger
@@ -18,6 +19,7 @@ from hypecut.paths import FFMPEG
 from .config import Config
 from .db import DB
 from .plans import can_receive
+from .sources import Source, from_key
 from .telegram_api import TelegramAPI
 
 log = logging.getLogger(__name__)
@@ -42,6 +44,46 @@ async def make_vertical(src: Path, out: Path) -> Path | None:
     return await asyncio.to_thread(_vertical_sync, src, out)
 
 
+class SourceRecorder(StreamRecorder):
+    """Запись с любой площадки: сначала streamlink, а если он не справился, ссылку на поток даёт yt-dlp."""
+
+    def __init__(self, source: Source, *args):
+        super().__init__(source.name, *args)
+        self.source = source
+
+    def open_stream(self):
+        from streamlink import Streamlink
+        from streamlink.options import Options
+
+        session = Streamlink()
+        opts = Options({"disable-ads": True}) if self.source.platform == "twitch" else None
+        streams = {}
+        try:
+            streams = session.streams(self.source.url, options=opts) if opts else session.streams(self.source.url)
+        except Exception as e:
+            log.info("streamlink не открыл %s: %s", self.source.key, e)
+        if not streams:
+            direct = _ytdlp_url(self.source.url)
+            if not direct:
+                raise StreamOffline()
+            streams = session.streams(("hls://" if ".m3u8" in direct else "httpstream://") + direct)
+            if not streams:
+                raise StreamOffline()
+        stream = streams.get(self.quality) or streams.get("best")
+        return stream.open()
+
+
+def _ytdlp_url(url: str) -> str | None:
+    """Прямая ссылка на живой поток через yt-dlp (если он установлен)."""
+    try:
+        p = subprocess.run(["yt-dlp", "-g", "--no-warnings", "-f", "best", url],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = [x for x in p.stdout.splitlines() if x.startswith("http")]
+    return lines[0] if p.returncode == 0 and lines else None
+
+
 class Dispatcher:
     """Рассылает готовый клип подписчикам канала с учётом их тарифа."""
 
@@ -59,8 +101,9 @@ class Dispatcher:
         clip = self.db.clip(clip_id)
         if clip is None:
             return 0
-        caption = (f"HypeCut · {clip['channel']}\n{clip['reason']} · "
-                   f"{datetime.fromtimestamp(clip['created']):%H:%M}\ntwitch.tv/{clip['channel']}")
+        src = from_key(clip["channel"])
+        caption = (f"HypeCut · {src.name.lstrip('@')} ({src.title})\n{clip['reason']} · "
+                   f"{datetime.fromtimestamp(clip['created']):%H:%M}\n{src.public()['url']}")
         sent = 0
         for user in self.db.followers(clip["channel"]):
             plan = self.db.plan_of(user)
@@ -87,7 +130,8 @@ class ChannelWorker:
 
     def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, channel: str, recorder=None):
         self.cfg, self.db, self.dispatcher, self.channel = cfg, db, dispatcher, channel
-        self.recorder = recorder or StreamRecorder(channel, cfg.quality, cfg.buffers_dir / channel,
+        self.source = from_key(channel)
+        self.recorder = recorder or SourceRecorder(self.source, cfg.quality, cfg.buffers_dir / self.source.safe,
                                                    cfg.segment_seconds, cfg.buffer_seconds)
         self.chat = ChatSpikeDetector(cfg.chat_window, cfg.chat_multiplier, cfg.chat_min_messages, cfg.hype_words)
         self.audio = AudioPeakDetector(cfg.audio_db_above)
@@ -102,7 +146,10 @@ class ChannelWorker:
 
     def start(self) -> None:
         self.recorder.on_segment(self._on_segment)
-        self._tasks = [asyncio.create_task(self.recorder.run()), asyncio.create_task(self._chat_loop())]
+        self._tasks = [asyncio.create_task(self.recorder.run())]
+        # чат пока читаем только на Twitch; на других площадках моменты ищутся по звуку
+        if self.source.has_chat:
+            self._tasks.append(asyncio.create_task(self._chat_loop()))
         log.info("Слежу за %s", self.channel)
 
     async def stop(self) -> None:
@@ -116,7 +163,7 @@ class ChannelWorker:
             # к чату подключаемся только во время эфира, чтобы не держать сотни лишних соединений
             while not self.recorder.live:
                 await asyncio.sleep(5)
-            stream = chat_messages(self.channel)
+            stream = chat_messages(self.source.name)
             try:
                 async for nick, text in stream:
                     now = time.time()
@@ -155,7 +202,7 @@ class ChannelWorker:
         segments = self.recorder.segments_between(start, end)
         if not segments:
             return None
-        base = f"{self.channel}_{datetime.fromtimestamp(trig.at):%Y%m%d_%H%M%S}"
+        base = f"{self.source.safe}_{datetime.fromtimestamp(trig.at):%Y%m%d_%H%M%S}"
         clip_id, n = base, 2
         while self.db.clip(clip_id):
             clip_id, n = f"{base}_{n}", n + 1
@@ -172,7 +219,10 @@ class ChannelWorker:
         self.db.add_clip(id=clip_id, channel=self.channel, stream_id=self.stream_id, file=out.name,
                          vertical_file=vertical.name if vertical else None,
                          thumb=thumb.name if thumb else None, reason=trig.reason, kind=trig.kind,
-                         created=trig.at, duration=round(end - max(start, segments[0].start), 1))
+                         created=trig.at, duration=round(end - max(start, segments[0].start), 1),
+                         moment=round(trig.at - max(start, segments[0].start), 1),
+                         messages=json.dumps([f"{n}: {m}" for t, n, m in self.messages
+                                              if trig.at - 12 <= t <= trig.at + 4][-8:], ensure_ascii=False))
         count = await self.dispatcher.deliver(clip_id)
         log.info("Клип %s разослан %d подписчикам", clip_id, count)
         return clip_id
@@ -186,6 +236,12 @@ class Manager:
         self.workers: dict[str, ChannelWorker] = {}
         self._factory = worker_factory or (lambda ch: ChannelWorker(cfg, db, dispatcher, ch))
         self._wake = asyncio.Event()
+
+    def status(self, key: str) -> dict:
+        """Идёт ли сейчас эфир у канала и сколько клипов сделано за последние 12 часов."""
+        w = self.workers.get(key)
+        return {"live": bool(w and w.recorder.live),
+                "clips_recent": self.db.clips_since(key, time.time() - 12 * 3600)}
 
     def poke(self) -> None:
         self._wake.set()

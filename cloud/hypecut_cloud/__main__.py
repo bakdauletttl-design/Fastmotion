@@ -28,7 +28,7 @@ async def main() -> None:
     api = TelegramAPI(cfg.bot_token) if cfg.bot_token else None
     dispatcher = Dispatcher(cfg, db, api)
     manager = Manager(cfg, db, dispatcher)
-    app = create_app(cfg, db, on_change=manager.poke)
+    app = create_app(cfg, db, on_change=manager.poke, status=manager.status)
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")),
                                            log_level="info"))
     tasks = [asyncio.create_task(server.serve()), asyncio.create_task(manager.run())]

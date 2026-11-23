@@ -1,6 +1,7 @@
 """HTTP API для мобильного приложения."""
 from __future__ import annotations
 
+import json
 import time
 from typing import Callable
 
@@ -12,6 +13,7 @@ from . import auth
 from .config import Config
 from .db import DB, normalize_channel
 from .plans import PLANS
+from .sources import PLATFORMS, from_key
 
 
 class GoogleIn(BaseModel):
@@ -29,9 +31,11 @@ class DevIn(BaseModel):
 
 class ChannelIn(BaseModel):
     channel: str
+    platform: str | None = None  # для ника без ссылки: twitch | youtube | kick | vk | tiktok
 
 
-def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None) -> FastAPI:
+def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None,
+               status: Callable[[str], dict] | None = None) -> FastAPI:
     app = FastAPI(title="HypeCut Cloud", version="0.1")
 
     def current_user(authorization: str | None = Header(None), token: str | None = Query(None)):
@@ -59,8 +63,19 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             "telegram_linked": user["telegram_chat_id"] is not None,
             "telegram_username": user["telegram_username"],
             "bot_username": cfg.bot_username,
-            "channels": db.follows(user["id"]),
+            "channels": channels_of(user["id"]),
         }
+
+    def channels_of(uid: int) -> list[dict]:
+        out = []
+        for k in db.follows(uid):
+            st = status(k) if status else {"live": False, "clips_recent": db.clips_since(k, time.time() - 12 * 3600)}
+            out.append({**from_key(k).public(), **st})
+        return out
+
+    @app.get("/platforms")
+    def platforms():
+        return [{"id": k, **v} for k, v in PLATFORMS.items()]
 
     @app.get("/health")
     def health():
@@ -116,13 +131,13 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     # ---------- каналы ----------
     @app.get("/channels")
     def channels(user=Depends(current_user)):
-        return db.follows(user["id"])
+        return channels_of(user["id"])
 
     @app.post("/channels")
     def add_channel(body: ChannelIn, user=Depends(current_user)):
-        ch = normalize_channel(body.channel)
+        ch = normalize_channel(body.channel, body.platform)
         if not ch:
-            raise HTTPException(400, "Не похоже на Twitch-канал. Пример: twitch.tv/имя")
+            raise HTTPException(400, "Не похоже на канал. Пример: twitch.tv/имя или youtube.com/@имя")
         res = db.follow(user["id"], ch)
         errors = {"limit": (403, "На этом тарифе больше каналов нельзя"),
                   "blocked": (403, "Стример попросил не нарезать этот канал"),
@@ -131,13 +146,13 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             code, text = errors[res]
             raise HTTPException(code, text)
         on_change()
-        return db.follows(user["id"])
+        return channels_of(user["id"])
 
-    @app.delete("/channels/{channel}")
-    def remove_channel(channel: str, user=Depends(current_user)):
-        db.unfollow(user["id"], channel.lower())
+    @app.delete("/channels/{key}")
+    def remove_channel(key: str, user=Depends(current_user)):
+        db.unfollow(user["id"], key)
         on_change()
-        return db.follows(user["id"])
+        return channels_of(user["id"])
 
     # ---------- клипы ----------
     @app.get("/clips")
@@ -145,8 +160,11 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         out = []
         for c in db.user_clips(user["id"]):
             base = f"{cfg.public_url}/clips/{c['id']}"
-            out.append({"id": c["id"], "channel": c["channel"], "reason": c["reason"], "kind": c["kind"],
-                        "created": c["created"], "duration": c["duration"],
+            src = from_key(c["channel"])
+            out.append({"id": c["id"], "channel": src.name.lstrip("@"), "platform": src.platform,
+                        "platform_title": src.title, "channel_key": c["channel"], "reason": c["reason"], "kind": c["kind"],
+                        "created": c["created"], "duration": c["duration"], "moment": c["moment"],
+                        "messages": json.loads(c["messages"] or "[]"),
                         "video": f"{base}/video", "thumb": f"{base}/thumb" if c["thumb"] else None,
                         "vertical": f"{base}/vertical" if c["vertical_file"] else None})
         return out
@@ -191,7 +209,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         """Стример попросил убрать свой канал: перестаём его нарезать для всех."""
         if not cfg.admin_token or x_admin_token != cfg.admin_token:
             raise HTTPException(401)
-        ch = normalize_channel(body.channel)
+        ch = normalize_channel(body.channel, body.platform)
         if not ch:
             raise HTTPException(400)
         db.block_channel(ch)

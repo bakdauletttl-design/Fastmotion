@@ -11,6 +11,18 @@ export type Plan = {
   priority: boolean;
 };
 
+export type PlatformId = "twitch" | "youtube" | "kick" | "vk" | "tiktok";
+
+export type Channel = {
+  key: string; // «площадка:имя», например twitch:nightowl
+  platform: PlatformId;
+  platform_title: string;
+  name: string;
+  url: string;
+  live: boolean;
+  clips_recent: number;
+};
+
 export type Me = {
   id: number;
   email: string | null;
@@ -21,12 +33,17 @@ export type Me = {
   telegram_linked: boolean;
   telegram_username: string | null;
   bot_username: string;
-  channels: string[];
+  channels: Channel[];
 };
 
 export type Clip = {
   id: string;
   channel: string;
+  channel_key: string;
+  platform: PlatformId;
+  platform_title: string;
+  moment: number | null;
+  messages: string[];
   reason: string;
   kind: string;
   created: number;
@@ -80,9 +97,9 @@ export const api = {
   me: () => call<Me>("GET", "/me"),
   deleteMe: () => call<{ ok: boolean }>("DELETE", "/me"),
   telegramLink: () => call<{ url: string; app_url: string }>("POST", "/telegram/link"),
-  addChannel: (channel: string) => call<string[]>("POST", "/channels", { channel }),
-  removeChannel: (channel: string) =>
-    call<string[]>("DELETE", `/channels/${encodeURIComponent(channel)}`),
+  addChannel: (channel: string, platform: PlatformId) =>
+    call<Channel[]>("POST", "/channels", { channel, platform }),
+  removeChannel: (key: string) => call<Channel[]>("DELETE", `/channels/${encodeURIComponent(key)}`),
   clips: () => call<Clip[]>("GET", "/clips"),
   plans: () => call<Plan[]>("GET", "/plans"),
 };

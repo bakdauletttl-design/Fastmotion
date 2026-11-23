@@ -1,7 +1,6 @@
 """База данных (SQLite). Пользователи, привязка Telegram, каналы, клипы и доставка."""
 from __future__ import annotations
 
-import re
 import secrets
 import sqlite3
 import threading
@@ -9,6 +8,7 @@ import time
 from pathlib import Path
 
 from .plans import TRIAL_DAYS, Plan, effective_plan
+from .sources import parse_source
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS link_tokens (
 );
 CREATE TABLE IF NOT EXISTS follows (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    channel TEXT NOT NULL,
+    channel TEXT NOT NULL,           -- ключ «площадка:имя», например twitch:nightowl
     created REAL NOT NULL,
     PRIMARY KEY (user_id, channel)
 );
@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS clips (
     kind TEXT,
     created REAL NOT NULL,
     duration REAL,
+    moment REAL,                     -- на какой секунде клипа сам момент
+    messages TEXT,                   -- сообщения чата вокруг момента (JSON-список строк)
     tg_file_id TEXT,                 -- после первой отправки Telegram отдаёт id, дальше шлём по нему
     tg_vertical_file_id TEXT
 );
@@ -66,15 +68,10 @@ CREATE INDEX IF NOT EXISTS follows_channel ON follows(channel);
 CREATE INDEX IF NOT EXISTS deliveries_user ON deliveries(user_id, created);
 """
 
-_CHANNEL_RE = re.compile(r"^[a-z0-9_]{4,25}$")
-
-
-def normalize_channel(text: str) -> str | None:
-    """«https://www.twitch.tv/Some_Streamer?x=1» -> «some_streamer». None, если это не похоже на канал."""
-    t = text.strip().lower()
-    t = re.sub(r"^(https?://)?(www\.|m\.)?twitch\.tv/", "", t)
-    t = t.split("?")[0].split("/")[0].lstrip("@")
-    return t if _CHANNEL_RE.match(t) else None
+def normalize_channel(text: str, platform: str | None = None) -> str | None:
+    """Ссылка или ник -> ключ канала «площадка:имя». None, если это не похоже на канал."""
+    src = parse_source(text, platform)
+    return src.key if src else None
 
 
 class DB:
@@ -231,6 +228,9 @@ class DB:
 
     def has_clip(self, uid: int, clip_id: str) -> bool:
         return self.one("SELECT 1 FROM deliveries WHERE user_id=? AND clip_id=?", (uid, clip_id)) is not None
+
+    def clips_since(self, channel: str, since: float) -> int:
+        return self.one("SELECT COUNT(*) n FROM clips WHERE channel=? AND created>=?", (channel, since))["n"]
 
     def old_clips(self, before: float) -> list[sqlite3.Row]:
         return self.q("SELECT * FROM clips WHERE created<?", (before,))

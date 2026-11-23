@@ -54,13 +54,21 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
   return (
     <Screen style={{ justifyContent: "space-between", paddingTop: 96, paddingBottom: 48 }}>
       <View>
-        <Tag>TWITCH · AI CLIPS</Tag>
+        <Tag>STREAMS · AI CLIPS</Tag>
         <H1 style={{ fontSize: 56, marginTop: 20, lineHeight: 58 }}>
           Hype<H1 style={{ fontSize: 56, color: c.accent }}>Cut</H1>
         </H1>
         <P dim style={{ fontSize: 18, lineHeight: 26, marginTop: 8 }}>
-          Самые яркие моменты стримов. Сами находятся, сами режутся и сразу приходят в Telegram.
+          Самые яркие моменты стримов с Twitch, YouTube, Kick, VK и TikTok. Сами находятся, сами режутся и сразу приходят в Telegram.
         </P>
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 28 }}>
+          {[["ЧАТ x6", "#1f6b4f", 0], ["ЗВУК", "#4b2c6b", 22], ["ХАЙП", "#6b4a1f", 0]].map(([t, col, top]) => (
+            <View key={t as string} style={{ flex: 1, aspectRatio: 9 / 12, marginTop: top as number, borderRadius: 18,
+                                             backgroundColor: col as string, padding: 9, opacity: 0.9 }}>
+              <Tag>{t}</Tag>
+            </View>
+          ))}
+        </View>
       </View>
       <View style={{ gap: 12 }}>
         {apple && (
@@ -79,7 +87,7 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
                   onPress={() => run("dev", () => api.loginDev("tester"))} />
         )}
         <P dim style={{ fontSize: 12, textAlign: "center", marginTop: 4 }}>
-          7 дней бесплатно. Продолжая, вы принимаете условия использования.
+          7 дней бесплатно · без карты. Продолжая, вы принимаете условия использования.
         </P>
       </View>
     </Screen>
