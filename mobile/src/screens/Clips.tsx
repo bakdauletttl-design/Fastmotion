@@ -1,10 +1,12 @@
 import { Image } from "expo-image";
-import { Directory, File, Paths } from "expo-file-system";
-import * as MediaLibrary from "expo-media-library";
 import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Modal, Pressable, RefreshControl, Share, View } from "react-native";
-import { api, Clip, withToken } from "../api";
+import { api, Clip, Me, withToken } from "../api";
+import { useReel } from "../highlights";
+import { saveToGallery as download } from "../save";
+import Editor from "./Editor";
+import Highlights from "./Highlights";
 import { Button, c, Chips, H1, P, s, Tag } from "../ui";
 import { L, LOCALE } from "../i18n";
 
@@ -14,6 +16,7 @@ const KIND: Record<string, string> = {
   manual: L("МОМЕНТ", "MOMENT"),
   edit: L("МОНТАЖ", "EDIT"),
   viewers: L("ЗРИТЕЛИ", "VIEWERS"),
+  user: L("МОЙ КЛИП", "MY CLIP"),
 };
 
 function shortReason(clip: Clip): string {
@@ -23,21 +26,7 @@ function shortReason(clip: Clip): string {
 
 const time = (t: number) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`;
 
-// Скачать клип в галерею телефона
-async function download(url: string) {
-  const perm = await MediaLibrary.requestPermissionsAsync(true);
-  if (!perm.granted) {
-    Alert.alert(L("Нет доступа к галерее", "No access to gallery"), L("Разреши HypeCut сохранять видео в настройках телефона.", "Allow HypeCut to save videos in your phone settings."));
-    return;
-  }
-  const dir = new Directory(Paths.cache, "clips");
-  if (!dir.exists) dir.create();
-  const file: File = await File.downloadFileAsync(url, dir, { idempotent: true });
-  await MediaLibrary.Asset.create(file.uri);
-  Alert.alert(L("Сохранено", "Saved"), L("Клип в галерее телефона.", "The clip is in your gallery."));
-}
-
-function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
+function Player({ clip, onClose, onEdit }: { clip: Clip; onClose: () => void; onEdit: () => void }) {
   const [vertical, setVertical] = useState(!!clip.vertical);
   const [saving, setSaving] = useState(false);
   const [rating, setRating] = useState(clip.rating ?? 0);
@@ -110,13 +99,17 @@ function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
       </View>
       <View style={{ flexDirection: "row", gap: 12, marginTop: 16 }}>
         <Button style={{ flex: 1 }} kind="outline" title={L("Скачать", "Save")} busy={saving} onPress={save} />
-        <Button style={{ flex: 1 }} title={L("Поделиться", "Share")} onPress={() => Share.share({ url, message: url })} />
+        <Button style={{ flex: 1 }} kind="outline" title={L("Поделиться", "Share")} onPress={() => Share.share({ url, message: url })} />
       </View>
+      <Button style={{ marginTop: 10 }} title={L("✂️ Монтаж", "✂️ Edit")} onPress={onEdit} />
     </View>
   );
 }
 
-export default function Clips() {
+export default function Clips({ me }: { me: Me | null }) {
+  const moments = useReel();
+  const [editing, setEditing] = useState<Clip | null>(null);
+  const [reelOpen, setReelOpen] = useState(false);
   const [clips, setClips] = useState<Clip[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<Clip | null>(null);
@@ -162,6 +155,13 @@ export default function Clips() {
               {fresh > 0 && <Tag>+{fresh} {L("НОВЫХ", "NEW")}</Tag>}
             </View>
             {channels.length > 2 && <Chips items={channels} value={filter} onChange={setFilter} />}
+            {moments.length > 0 && (
+              <Pressable onPress={() => setReelOpen(true)}
+                         style={[s.card, s.row, { borderColor: c.accent, backgroundColor: c.accentDim, paddingVertical: 12 }]}>
+                <P style={{ fontWeight: "700" }}>🎬 {L("Хайлайты", "Highlights")}: {moments.length}</P>
+                <P style={{ color: c.accent, fontWeight: "700" }}>{L("Склеить", "Build")} ›</P>
+              </Pressable>
+            )}
           </View>
         }
         ListEmptyComponent={
@@ -196,7 +196,13 @@ export default function Clips() {
         )}
       />
       <Modal visible={!!open} animationType="slide" onRequestClose={() => setOpen(null)}>
-        {open && <Player clip={open} onClose={() => setOpen(null)} />}
+        {open && <Player clip={open} onClose={() => setOpen(null)} onEdit={() => { setEditing(open); setOpen(null); }} />}
+      </Modal>
+      <Modal visible={!!editing} animationType="slide" onRequestClose={() => setEditing(null)}>
+        {editing && <Editor clip={editing} me={me} onClose={() => { setEditing(null); load(); }} />}
+      </Modal>
+      <Modal visible={reelOpen} animationType="slide" onRequestClose={() => setReelOpen(false)}>
+        <Highlights me={me} onClose={() => setReelOpen(false)} />
       </Modal>
     </View>
   );

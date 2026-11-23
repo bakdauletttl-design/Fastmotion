@@ -1,7 +1,8 @@
 import { Image } from "expo-image";
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, FlatList, Pressable, TextInput, View } from "react-native";
-import { api, Found, Me, PlatformId } from "../api";
+import { Alert, FlatList, Modal, Pressable, TextInput, View } from "react-native";
+import { api, Channel, Found, Me, PlatformId } from "../api";
+import Live from "./Live";
 import { Button, c, Chips, H1, P, PLATFORMS, platformColor, s } from "../ui";
 import { L } from "../i18n";
 
@@ -21,6 +22,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
   const [busy, setBusy] = useState<string | null>(null);
   const [found, setFound] = useState<Found[]>([]);
   const [popular, setPopular] = useState<Found[]>([]);
+  const [watching, setWatching] = useState<Channel | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const limit = me.plan?.channels ?? 0;
   const hint = PLATFORMS.find((p) => p.id === platform)?.hint ?? "";
@@ -141,7 +143,9 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
                 )}
               </View>
             </View>
-            <Button title={L("Убрать", "Remove")} kind="text" onPress={() => unfollow(item.key)} />
+            {item.live && <Button title={L("▶ Смотреть", "▶ Watch")} kind="outline" style={{ height: 40 }}
+                                  onPress={() => setWatching(item)} />}
+            <Button title={item.live ? "✕" : L("Убрать", "Remove")} kind="text" onPress={() => unfollow(item.key)} />
           </View>
         )}
         ListFooterComponent={
@@ -166,6 +170,9 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
           </View>
         }
       />
+      <Modal visible={!!watching} animationType="slide" onRequestClose={() => setWatching(null)}>
+        {watching && <Live channel={watching} me={me} onClose={() => { setWatching(null); onChange(); }} />}
+      </Modal>
     </View>
   );
 }

@@ -67,6 +67,7 @@ export type Clip = {
   kind: string;
   created: number;
   duration: number;
+  source_duration?: number; // длина исходника: столько можно обрезать в редакторе
   quality: number;
   video: string;
   thumb: string | null;
@@ -110,6 +111,11 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 type Session = { token: string; user: Me };
 
+export type LiveInfo = { live: boolean; max_seconds: number; playlist: string | null; url: string };
+export type Rendered = { id: string; video: string; duration: number };
+export type EditOptions = { start: number; end: number; vertical: boolean; subtitles: boolean; title?: string | null };
+export type Part = { clip: string; start: number; end: number };
+
 export const api = {
   loginGoogle: (id_token: string) => call<Session>("POST", "/auth/google", { id_token }),
   loginApple: (identity_token: string, name?: string) =>
@@ -128,6 +134,16 @@ export const api = {
   popular: () => call<Found[]>("GET", "/popular"),
   rate: (id: string, value: number) => call<{ ok: boolean }>("POST", `/clips/${encodeURIComponent(id)}/rate`, { value }),
   pushToken: (token: string) => call<{ ok: boolean }>("POST", "/push/token", { token }),
+  // эфир в приложении и клип своими руками
+  live: (key: string) => call<LiveInfo>("GET", `/live/${encodeURIComponent(key)}`),
+  cut: (key: string, seconds: number, behind: number) =>
+    call<Clip>("POST", `/live/${encodeURIComponent(key)}/clip`, { seconds, behind }),
+  edit: (id: string, o: EditOptions) => call<Rendered>("POST", `/clips/${encodeURIComponent(id)}/edit`, o),
+  sendClip: (id: string, edit?: string) =>
+    call<{ ok: boolean }>("POST", `/clips/${encodeURIComponent(id)}/telegram`, { edit: edit ?? null }),
+  highlights: (parts: Part[], vertical: boolean, subtitles: boolean, title?: string | null) =>
+    call<Rendered>("POST", "/highlights", { parts, vertical, subtitles, title: title ?? null }),
+  sendHighlights: (id: string) => call<{ ok: boolean }>("POST", `/highlights/${id}/telegram`),
 };
 
 // Файлы клипов открываются по ссылке, поэтому токен передаётся в адресе

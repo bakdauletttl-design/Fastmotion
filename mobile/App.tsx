@@ -77,7 +77,7 @@ function App() {
     body = (
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 24 }}>
-          {tab === "clips" && <Clips />}
+          {tab === "clips" && <Clips me={me} />}
           {tab === "channels" && <Channels me={me} onChange={refresh} onUpgrade={() => setTab("plans")} />}
           {tab === "plans" && <Plans me={me} onChange={refresh} />}
           {tab === "account" && <Account me={me} onLogout={() => setMe(null)} onTelegram={() => setLinking(true)} />}
