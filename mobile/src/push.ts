@@ -1,11 +1,11 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { api } from "./api";
+import { api, DEMO } from "./api";
 import { L } from "./i18n";
 
 // Показываем уведомление, даже когда приложение открыто
-Notifications.setNotificationHandler({
+if (!DEMO) Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
     shouldSetBadge: false,
@@ -16,6 +16,7 @@ Notifications.setNotificationHandler({
 
 /** Спрашивает разрешение и отправляет токен телефона на сервер. Тихо ничего не делает, если нельзя. */
 export async function registerPush(): Promise<void> {
+  if (DEMO) return;
   try {
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync("clips", {
@@ -39,6 +40,7 @@ export async function registerPush(): Promise<void> {
 
 /** Вызывает onOpen, когда человек нажал на уведомление о клипе. */
 export function onNotificationTap(onOpen: (data: Record<string, unknown>) => void): () => void {
+  if (DEMO) return () => undefined;
   const sub = Notifications.addNotificationResponseReceivedListener((r) =>
     onOpen((r.notification.request.content.data ?? {}) as Record<string, unknown>),
   );

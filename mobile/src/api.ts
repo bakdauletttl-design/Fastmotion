@@ -1,5 +1,7 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 import { API_URL } from "./config";
+import { demoCall } from "./demo";
 import { L, LANG } from "./i18n";
 
 export type Plan = {
@@ -75,15 +77,19 @@ export type Clip = {
 };
 
 const KEY = "hypecut_session";
+/** Демо без сервера: веб-версия для показа или сборка с EXPO_PUBLIC_DEMO=1 */
+export const DEMO = Platform.OS === "web" || process.env.EXPO_PUBLIC_DEMO === "1";
 let token: string | null = null;
 
 export async function loadToken(): Promise<string | null> {
+  if (DEMO) return token;
   token = await SecureStore.getItemAsync(KEY);
   return token;
 }
 
 export async function setToken(t: string | null): Promise<void> {
   token = t;
+  if (DEMO) return;
   if (t) await SecureStore.setItemAsync(KEY, t);
   else await SecureStore.deleteItemAsync(KEY);
 }
@@ -95,6 +101,13 @@ export class ApiError extends Error {
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (DEMO) {
+    try {
+      return (await demoCall(method, path, body)) as T;
+    } catch (e: any) {
+      throw new ApiError(e?.status ?? 400, String(e?.message ?? e));
+    }
+  }
   const res = await fetch(API_URL + path, {
     method,
     headers: {
@@ -147,4 +160,4 @@ export const api = {
 };
 
 // Файлы клипов открываются по ссылке, поэтому токен передаётся в адресе
-export const withToken = (url: string) => `${url}?token=${encodeURIComponent(token ?? "")}`;
+export const withToken = (url: string) => (DEMO ? url : `${url}?token=${encodeURIComponent(token ?? "")}`);

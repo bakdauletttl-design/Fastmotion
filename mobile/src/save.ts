@@ -1,10 +1,14 @@
 import { Directory, File, Paths } from "expo-file-system";
 import * as MediaLibrary from "expo-media-library";
-import { Alert } from "react-native";
+import { Alert, Linking, Platform } from "react-native";
 import { L } from "./i18n";
 
 /** Скачать видео в галерею телефона. */
 export async function saveToGallery(url: string): Promise<void> {
+  if (Platform.OS === "web") {
+    Linking.openURL(url); // в браузере просто открываем видео: его можно сохранить оттуда
+    return;
+  }
   const perm = await MediaLibrary.requestPermissionsAsync(true);
   if (!perm.granted) {
     Alert.alert(L("Нет доступа к галерее", "No access to gallery"),

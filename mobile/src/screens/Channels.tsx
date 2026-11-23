@@ -105,7 +105,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
             <Chips items={PLATFORMS.map((p) => ({ id: p.id, title: p.title }))} value={platform} onChange={setPlatform} />
             <View style={{ flexDirection: "row", gap: 10 }}>
               <TextInput
-                style={[s.input, { flex: 1, borderRadius: 999 }]}
+                style={[s.input, { flex: 1, minWidth: 0, borderRadius: 999 }]}
                 placeholder={platform === "twitch" ? L("Начни вводить ник", "Start typing a name") : hint}
                 placeholderTextColor={c.dim}
                 autoCapitalize="none"
@@ -143,7 +143,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
                 )}
               </View>
             </View>
-            {item.live && <Button title={L("▶ Смотреть", "▶ Watch")} kind="outline" style={{ height: 40 }}
+            {item.live && <Button title={L("▶ Эфир", "▶ Live")} kind="outline" style={{ height: 38, paddingHorizontal: 12 }}
                                   onPress={() => setWatching(item)} />}
             <Button title={item.live ? "✕" : L("Убрать", "Remove")} kind="text" onPress={() => unfollow(item.key)} />
           </View>
