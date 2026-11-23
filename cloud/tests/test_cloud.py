@@ -347,3 +347,45 @@ def test_push_tokens_live_announce_and_clip_push(env):
     assert asyncio.run(d.announce_live("twitch:streamer")) == 1
     assert len(sent) == 2 and "в эфире" in sent[0]["title"]
     assert db.push_tokens([uid]) == ["ExponentPushToken[ok1]"]  # мёртвый токен удалён
+
+
+def test_twitch_search_avatars_and_viewer_signal(env):
+    import httpx
+    from hypecut_cloud.twitch import Twitch
+
+    cfg, db, tg = env
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        if req.url.host == "id.twitch.tv":
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+        if req.url.path.endswith("/search/channels"):
+            return httpx.Response(200, json={"data": [
+                {"broadcaster_login": "offguy", "display_name": "OffGuy", "thumbnail_url": "a1", "is_live": False},
+                {"broadcaster_login": "liveguy", "display_name": "LiveGuy", "thumbnail_url": "a2", "is_live": True,
+                 "game_name": "CS2"}]})
+        if req.url.path.endswith("/users"):
+            logins = req.url.params.get_list("login")
+            return httpx.Response(200, json={"data": [
+                {"id": "42", "login": x, "display_name": x.title(), "profile_image_url": f"img/{x}"} for x in logins]})
+        if req.url.path.endswith("/clips"):
+            return httpx.Response(200, json={"data": [{}, {}, {}]})
+        return httpx.Response(404)
+
+    tw = Twitch("id", "secret", httpx.Client(transport=httpx.MockTransport(handler)))
+    client = TestClient(create_app(cfg, db, twitch=tw))
+    tok = client.post("/auth/dev", json={"name": "a"}).json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    found = client.get("/search", params={"q": "guy"}, headers=h).json()
+    assert [x["name"] for x in found] == ["liveguy", "offguy"] and found[0]["game"] == "CS2"
+    client.post("/channels", json={"channel": "twitch.tv/streamer"}, headers=h)
+    ch = client.get("/channels", headers=h).json()
+    assert ch[0]["avatar"] == "img/streamer" and ch[0]["display"] == "Streamer"
+    assert any(x["avatar"] for x in client.get("/popular").json())
+    assert tw.recent_clips("streamer", time.time() - 120) == 3
+    assert calls.count("/helix/users") == 2  # каналы и популярные; для клипов id взят из кэша
+    assert ChannelWorker.viewer_trigger(1, 1000) is None
+    trig = ChannelWorker.viewer_trigger(3, 1000)
+    assert trig.kind == "viewers" and trig.at == 970
+    assert Twitch("", "").search("x") == []

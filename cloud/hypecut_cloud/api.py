@@ -16,6 +16,7 @@ from .config import Config
 from .db import DB, normalize_channel
 from .plans import PLANS
 from .sources import PLATFORMS, from_key
+from .twitch import POPULAR, Twitch
 
 
 class GoogleIn(BaseModel):
@@ -41,8 +42,20 @@ class ChannelIn(BaseModel):
 
 
 def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None,
-               status: Callable[[str], dict] | None = None) -> FastAPI:
+               status: Callable[[str], dict] | None = None, twitch: Twitch | None = None) -> FastAPI:
     app = FastAPI(title="HypeCut Cloud", version="0.1")
+    twitch = twitch or Twitch()
+
+    def with_avatars(items: list[dict]) -> list[dict]:
+        """Подставляет аватарки Twitch одним запросом на весь список."""
+        names = [x["name"] for x in items if x["platform"] == "twitch"]
+        users = twitch.users(names) if names else {}
+        for x in items:
+            u = users.get(x["name"].lower()) if x["platform"] == "twitch" else None
+            x.setdefault("avatar", u["avatar"] if u else None)
+            if u:
+                x["display"] = u["title"]
+        return items
 
     def current_user(authorization: str | None = Header(None), token: str | None = Query(None)):
         raw = (authorization or "").removeprefix("Bearer ").strip() or token
@@ -77,11 +90,22 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         for k in db.follows(uid):
             st = status(k) if status else {"live": False, "clips_recent": db.clips_since(k, time.time() - 12 * 3600)}
             out.append({**from_key(k).public(), **st})
-        return out
+        return with_avatars(out)
 
     @app.get("/platforms")
     def platforms():
         return [{"id": k, **v} for k, v in PLATFORMS.items()]
+
+    @app.get("/search")
+    def search(q: str = Query(..., min_length=2, max_length=60), platform: str = "twitch",
+               user=Depends(current_user)):
+        if platform == "twitch":
+            return twitch.search(q.strip().lstrip("@"))
+        return []
+
+    @app.get("/popular")
+    def popular():
+        return with_avatars([{**from_key(f"{p}:{n}").public()} for p, n in POPULAR])
 
     @app.get("/health")
     def health():

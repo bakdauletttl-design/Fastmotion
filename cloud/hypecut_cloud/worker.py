@@ -132,8 +132,9 @@ class Dispatcher:
 class ChannelWorker:
     """Следит за одним каналом: ждёт эфир, пишет буфер, ловит всплески чата и звука, режет клипы."""
 
-    def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, channel: str, recorder=None):
+    def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, channel: str, recorder=None, twitch=None):
         self.cfg, self.db, self.dispatcher, self.channel = cfg, db, dispatcher, channel
+        self.twitch = twitch
         self.source = from_key(channel)
         self.recorder = recorder or SourceRecorder(self.source, cfg.quality, cfg.buffers_dir / self.source.safe,
                                                    cfg.segment_seconds, cfg.buffer_seconds)
@@ -155,6 +156,8 @@ class ChannelWorker:
         # чат пока читаем только на Twitch; на других площадках моменты ищутся по звуку
         if self.source.has_chat:
             self._tasks.append(asyncio.create_task(self._chat_loop()))
+        if self.source.platform == "twitch" and self.twitch and self.twitch.enabled:
+            self._tasks.append(asyncio.create_task(self._viewer_clips_loop()))
         log.info("Слежу за %s", self.channel)
 
     async def stop(self) -> None:
@@ -180,6 +183,23 @@ class ChannelWorker:
                         break
             finally:
                 await stream.aclose()
+
+    async def _viewer_clips_loop(self, every: float = 60) -> None:
+        """Сигнал «зрители сами делают клипы»: если за 2 минуты их сделали двое и больше, момент точно яркий."""
+        while True:
+            await asyncio.sleep(every)
+            if not self.recorder.live:
+                continue
+            now = time.time()
+            n = await asyncio.to_thread(self.twitch.recent_clips, self.source.name, now - 120)
+            trig = self.viewer_trigger(n, now)
+            if trig:
+                self.fire(trig)
+
+    @staticmethod
+    def viewer_trigger(n: int, now: float) -> Trigger | None:
+        # зритель жмёт «клип» секунд через 20–40 после момента, поэтому сдвигаем назад
+        return Trigger(at=now - 30, reason=f"клипы зрителей x{n}", score=n, kind="viewers") if n >= 2 else None
 
     async def _on_segment(self, seg) -> None:
         if self._announced != self.stream_id:
@@ -248,10 +268,10 @@ class ChannelWorker:
 class Manager:
     """Держит запущенными воркеры ровно для тех каналов, на которые кто-то подписан с действующим тарифом."""
 
-    def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, worker_factory=None):
+    def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, worker_factory=None, twitch=None):
         self.cfg, self.db, self.dispatcher = cfg, db, dispatcher
         self.workers: dict[str, ChannelWorker] = {}
-        self._factory = worker_factory or (lambda ch: ChannelWorker(cfg, db, dispatcher, ch))
+        self._factory = worker_factory or (lambda ch: ChannelWorker(cfg, db, dispatcher, ch, twitch=twitch))
         self._wake = asyncio.Event()
 
     def status(self, key: str) -> dict:

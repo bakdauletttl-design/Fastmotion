@@ -7,7 +7,7 @@ import { Alert, FlatList, Modal, Pressable, RefreshControl, Share, View } from "
 import { api, Clip, withToken } from "../api";
 import { Button, c, Chips, H1, P, s, Tag } from "../ui";
 
-const KIND: Record<string, string> = { chat: "ЧАТ", audio: "ЗВУК", manual: "МОМЕНТ", edit: "МОНТАЖ" };
+const KIND: Record<string, string> = { chat: "ЧАТ", audio: "ЗВУК", manual: "МОМЕНТ", edit: "МОНТАЖ", viewers: "ЗРИТЕЛИ" };
 
 function shortReason(clip: Clip): string {
   const m = clip.reason.match(/x(\d+(?:\.\d)?)/);

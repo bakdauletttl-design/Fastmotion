@@ -1,21 +1,54 @@
-import React, { useState } from "react";
+import { Image } from "expo-image";
+import React, { useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, TextInput, View } from "react-native";
-import { api, Me, PlatformId } from "../api";
+import { api, Found, Me, PlatformId } from "../api";
 import { Button, c, Chips, H1, P, PLATFORMS, platformColor, s } from "../ui";
+
+function Avatar({ name, platform, uri, size = 40 }: { name: string; platform: PlatformId; uri?: string | null; size?: number }) {
+  if (uri) return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} />;
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: platformColor(platform),
+                   alignItems: "center", justifyContent: "center" }}>
+      <P style={{ color: c.onAccent, fontWeight: "800" }}>{name.replace("@", "").charAt(0).toUpperCase()}</P>
+    </View>
+  );
+}
 
 export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange: () => void; onUpgrade: () => void }) {
   const [platform, setPlatform] = useState<PlatformId>("twitch");
   const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [found, setFound] = useState<Found[]>([]);
+  const [popular, setPopular] = useState<Found[]>([]);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const limit = me.plan?.channels ?? 0;
   const hint = PLATFORMS.find((p) => p.id === platform)?.hint ?? "";
+  const following = new Set(me.channels.map((x) => x.key));
 
-  async function add() {
-    if (!text.trim()) return;
-    setBusy(true);
+  useEffect(() => {
+    api.popular().then(setPopular).catch(() => null);
+  }, []);
+
+  // поиск по мере набора (пока только Twitch отдаёт подсказки)
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    const q = text.trim();
+    if (q.length < 2 || q.includes("/") || platform !== "twitch") {
+      setFound([]);
+      return;
+    }
+    timer.current = setTimeout(() => {
+      api.search(q, platform).then(setFound).catch(() => setFound([]));
+    }, 350);
+  }, [text, platform]);
+
+  async function add(channel: string, p: PlatformId = platform) {
+    if (!channel.trim()) return;
+    setBusy(channel);
     try {
-      await api.addChannel(text, platform);
+      await api.addChannel(channel, p);
       setText("");
+      setFound([]);
       onChange();
     } catch (e: any) {
       if (e?.status === 403 || e?.status === 402) {
@@ -25,7 +58,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
         ]);
       } else Alert.alert("Ошибка", String(e?.message ?? e));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -35,44 +68,64 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
   }
 
   const full = limit > 0 && me.channels.length >= limit && me.plan?.id !== "pro";
+  const suggestions = popular.filter((x) => x.key && !following.has(x.key));
+
+  const foundRow = (item: Found, i: number) => (
+    <Pressable key={`${item.platform}:${item.name}:${i}`} onPress={() => add(item.name, item.platform)}
+               style={[s.row, { paddingVertical: 8, gap: 12 }]}>
+      <Avatar name={item.name} platform={item.platform} uri={item.avatar} size={36} />
+      <View style={{ flex: 1 }}>
+        <P style={{ fontWeight: "700" }} numberOfLines={1}>{item.display ?? item.title ?? item.name}</P>
+        <P dim style={{ fontSize: 12 }} numberOfLines={1}>
+          {[item.live === true ? "● LIVE" : item.live === false ? "офлайн" : null, item.game].filter(Boolean).join(" · ")}
+        </P>
+      </View>
+      <Button title={busy === item.name ? "…" : "+"} kind="outline" onPress={() => add(item.name, item.platform)} />
+    </Pressable>
+  );
 
   return (
     <View style={{ flex: 1 }}>
-      <H1>Каналы</H1>
-      <P dim>Любой стример с Twitch, YouTube, Kick, VK Видео или TikTok. Пока он в эфире, HypeCut смотрит стрим за тебя.</P>
-      <View style={{ marginTop: 16 }}>
-        <Chips items={PLATFORMS.map((p) => ({ id: p.id, title: p.title }))} value={platform} onChange={setPlatform} />
-      </View>
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-        <TextInput
-          style={[s.input, { flex: 1, borderRadius: 999 }]}
-          placeholder={hint}
-          placeholderTextColor={c.dim}
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={text}
-          onChangeText={setText}
-          onSubmitEditing={add}
-        />
-        <Button title="Добавить" onPress={add} busy={busy} />
-      </View>
-      <P dim style={{ marginTop: 12, fontSize: 13 }}>
-        {me.channels.length} из {limit} на тарифе {me.plan?.title ?? "—"}
-      </P>
       <FlatList
-        style={{ marginTop: 8 }}
         data={me.channels}
         keyExtractor={(x) => x.key}
-        contentContainerStyle={{ gap: 10, paddingVertical: 8 }}
+        contentContainerStyle={{ gap: 10, paddingBottom: 24 }}
+        ListHeaderComponent={
+          <View style={{ gap: 12, marginBottom: 4 }}>
+            <H1>Каналы</H1>
+            <P dim>Любой стример с Twitch, YouTube, Kick, VK Видео или TikTok. Пока он в эфире, HypeCut смотрит стрим за тебя.</P>
+            <Chips items={PLATFORMS.map((p) => ({ id: p.id, title: p.title }))} value={platform} onChange={setPlatform} />
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TextInput
+                style={[s.input, { flex: 1, borderRadius: 999 }]}
+                placeholder={platform === "twitch" ? "Начни вводить ник" : hint}
+                placeholderTextColor={c.dim}
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={text}
+                onChangeText={setText}
+                onSubmitEditing={() => add(text)}
+              />
+              <Button title="Добавить" onPress={() => add(text)} busy={busy === text && !!text} />
+            </View>
+            {found.length > 0 && <View style={[s.card, { paddingVertical: 6 }]}>{found.slice(0, 6).map(foundRow)}</View>}
+            <P dim style={{ fontSize: 13 }}>
+              {me.channels.length} из {limit} на тарифе {me.plan?.title ?? "—"}
+            </P>
+          </View>
+        }
         renderItem={({ item }) => (
           <View style={[s.card, s.row, { paddingVertical: 12 }]}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1 }}>
-              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: platformColor(item.platform),
-                             alignItems: "center", justifyContent: "center" }}>
-                <P style={{ color: c.onAccent, fontWeight: "800" }}>{item.name.replace("@", "").charAt(0).toUpperCase()}</P>
+              <View>
+                <Avatar name={item.name} platform={item.platform} uri={item.avatar} />
+                {item.live && (
+                  <View style={{ position: "absolute", right: -2, bottom: -2, width: 14, height: 14, borderRadius: 7,
+                                 backgroundColor: c.danger, borderWidth: 2, borderColor: c.card }} />
+                )}
               </View>
               <View style={{ flex: 1 }}>
-                <P style={{ fontWeight: "700" }} numberOfLines={1}>{item.name.replace(/^@/, "")}</P>
+                <P style={{ fontWeight: "700" }} numberOfLines={1}>{item.display ?? item.name.replace(/^@/, "")}</P>
                 {item.live ? (
                   <P style={{ color: c.danger, fontSize: 12, fontWeight: "800" }}>
                     ● LIVE · {item.platform_title} · {item.clips_recent} клипов
@@ -86,13 +139,23 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
           </View>
         )}
         ListFooterComponent={
-          full ? (
-            <Pressable onPress={onUpgrade}
-                       style={[s.card, { marginTop: 4, borderColor: c.accent, backgroundColor: c.accentDim }]}>
-              <P style={{ fontWeight: "700" }}>Нужно больше каналов?</P>
-              <P dim style={{ fontSize: 13 }}>На Pro до 10 стримеров и клипы без лимита</P>
-            </Pressable>
-          ) : undefined
+          <View style={{ gap: 10, marginTop: 4 }}>
+            {full && (
+              <Pressable onPress={onUpgrade}
+                         style={[s.card, { borderColor: c.accent, backgroundColor: c.accentDim }]}>
+                <P style={{ fontWeight: "700" }}>Нужно больше каналов?</P>
+                <P dim style={{ fontSize: 13 }}>На Pro до 10 стримеров и клипы без лимита</P>
+              </Pressable>
+            )}
+            {!full && suggestions.length > 0 && (
+              <View style={[s.card, { paddingVertical: 10 }]}>
+                <P style={{ fontWeight: "700", marginBottom: 4 }}>Популярные стримеры</P>
+                {suggestions.slice(0, 8).map((x, i) =>
+                  foundRow({ ...x, title: x.display ?? x.name.replace(/^@/, ""),
+                             game: x.platform_title ?? null, live: undefined }, i))}
+              </View>
+            )}
+          </View>
         }
       />
     </View>

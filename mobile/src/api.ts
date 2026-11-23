@@ -21,6 +21,20 @@ export type Channel = {
   url: string;
   live: boolean;
   clips_recent: number;
+  avatar?: string | null;
+  display?: string;
+};
+
+export type Found = {
+  platform: PlatformId;
+  name: string;
+  title?: string;
+  display?: string;
+  avatar?: string | null;
+  live?: boolean;
+  game?: string | null;
+  key?: string;
+  platform_title?: string;
 };
 
 export type Me = {
@@ -103,6 +117,9 @@ export const api = {
   removeChannel: (key: string) => call<Channel[]>("DELETE", `/channels/${encodeURIComponent(key)}`),
   clips: () => call<Clip[]>("GET", "/clips"),
   plans: () => call<Plan[]>("GET", "/plans"),
+  search: (q: string, platform: PlatformId) =>
+    call<Found[]>("GET", `/search?q=${encodeURIComponent(q)}&platform=${platform}`),
+  popular: () => call<Found[]>("GET", "/popular"),
   pushToken: (token: string) => call<{ ok: boolean }>("POST", "/push/token", { token }),
 };
 
