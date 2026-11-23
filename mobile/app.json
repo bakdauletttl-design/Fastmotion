@@ -63,7 +63,8 @@
           "defaultChannel": "clips"
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      "@sentry/react-native"
     ],
     "scheme": "hypecut",
     "backgroundColor": "#07080A",

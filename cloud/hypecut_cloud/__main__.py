@@ -22,6 +22,10 @@ log = logging.getLogger("hypecut_cloud")
 async def main() -> None:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if os.environ.get("SENTRY_DSN"):
+        # отчёты об ошибках сервера в sentry.io (необязательно)
+        import sentry_sdk
+        sentry_sdk.init(dsn=os.environ["SENTRY_DSN"], traces_sample_rate=0.05, send_default_pii=False)
     cfg = Config()
     if not os.environ.get("JWT_SECRET"):
         log.warning("JWT_SECRET не задан: после перезапуска всем придётся войти заново")

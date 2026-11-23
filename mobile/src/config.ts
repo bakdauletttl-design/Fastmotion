@@ -6,3 +6,5 @@ export const REVENUECAT_IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY ?? 
 export const REVENUECAT_ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY ?? "";
 // Вход без Apple/Google, только для тестов с сервером, где DEV_LOGIN=1
 export const DEV_LOGIN = process.env.EXPO_PUBLIC_DEV_LOGIN === "1";
+// Отчёты о падениях приложения (sentry.io, бесплатный тариф). Пусто: отчёты выключены
+export const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN ?? "";

@@ -92,6 +92,15 @@ CREATE TABLE IF NOT EXISTS push_tokens (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ratings (
+    clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    value INTEGER NOT NULL,          -- 1 понравился, -1 нет
+    channel TEXT NOT NULL,           -- копия канала и причины: статистика переживёт удаление файлов
+    kind TEXT,
+    created REAL NOT NULL,
+    PRIMARY KEY (clip_id, user_id)
+);
 CREATE INDEX IF NOT EXISTS follows_channel ON follows(channel);
 CREATE INDEX IF NOT EXISTS deliveries_user ON deliveries(user_id, created);
 """
@@ -166,6 +175,44 @@ class DB:
 
     def delete_user(self, uid: int) -> None:
         self.x("DELETE FROM users WHERE id=?", (uid,))
+
+    # ---------- оценки и статистика ----------
+    def rate(self, clip_id: str, uid: int, value: int) -> bool:
+        clip = self.clip(clip_id)
+        if clip is None:
+            return False
+        if value == 0:
+            self.x("DELETE FROM ratings WHERE clip_id=? AND user_id=?", (clip_id, uid))
+        else:
+            self.x("INSERT OR REPLACE INTO ratings VALUES (?,?,?,?,?,?)",
+                   (clip_id, uid, 1 if value > 0 else -1, clip["channel"], clip["kind"], time.time()))
+        return True
+
+    def my_ratings(self, uid: int) -> dict[str, int]:
+        return {r["clip_id"]: r["value"] for r in self.q("SELECT clip_id, value FROM ratings WHERE user_id=?", (uid,))}
+
+    def stats(self, now: float | None = None) -> dict:
+        """Главные цифры для владельца: пользователи, оплаты, клипы, что нравится."""
+        now = now or time.time()
+        day, week = now - 86400, now - 7 * 86400
+        one = lambda sql, *a: self.one(sql, a)[0] or 0  # noqa: E731
+        paying = {r["plan"]: r["n"] for r in self.q(
+            "SELECT plan, COUNT(*) n FROM users WHERE plan IS NOT NULL AND plan_until>? GROUP BY plan", (now,))}
+        kinds = {r["kind"]: {"up": r["up"], "down": r["down"]} for r in self.q(
+            "SELECT kind, SUM(value>0) up, SUM(value<0) down FROM ratings GROUP BY kind")}
+        return {
+            "users": one("SELECT COUNT(*) FROM users"),
+            "new_users_7d": one("SELECT COUNT(*) FROM users WHERE created>?", week),
+            "trial_active": one("SELECT COUNT(*) FROM users WHERE trial_until>? AND (plan IS NULL OR plan_until<?)",
+                                now, now),
+            "paying": paying,
+            "telegram_linked": one("SELECT COUNT(*) FROM users WHERE telegram_chat_id IS NOT NULL"),
+            "channels_followed": one("SELECT COUNT(DISTINCT channel) FROM follows"),
+            "clips_24h": one("SELECT COUNT(*) FROM clips WHERE created>?", day),
+            "deliveries_24h": one("SELECT COUNT(*) FROM deliveries WHERE created>?", day),
+            "stars_30d": one("SELECT SUM(stars) FROM payments WHERE created>?", now - 30 * 86400),
+            "ratings_by_kind": kinds,
+        }
 
     # ---------- пуш-уведомления ----------
     def add_push_token(self, uid: int, token: str) -> None:

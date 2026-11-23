@@ -396,3 +396,22 @@ def test_errors_in_english_for_english_phones(env):
     client = TestClient(create_app(cfg, db))
     assert client.get("/me").json()["detail"] == "Нужно войти"
     assert client.get("/me", headers={"Accept-Language": "en"}).json()["detail"] == "Please sign in"
+
+
+def test_ratings_and_owner_stats(env):
+    cfg, db, tg = env
+    cfg.admin_token = "adm"
+    client = TestClient(create_app(cfg, db))
+    tok = client.post("/auth/dev", json={"name": "a"}).json()["token"]
+    h = {"Authorization": f"Bearer {tok}"}
+    uid = client.get("/me", headers=h).json()["id"]
+    db.follow(uid, "twitch:streamer")
+    db.add_clip(id="c1", channel="twitch:streamer", stream_id="s", file="c1.mp4", reason="чат x5", kind="chat",
+                created=time.time(), duration=30)
+    db.add_delivery("c1", uid, "s", True)
+    assert client.post("/clips/c1/rate", json={"value": 1}, headers=h).json()["ok"]
+    assert client.post("/clips/nope/rate", json={"value": 1}, headers=h).status_code == 404
+    assert client.get("/clips", headers=h).json()[0]["rating"] == 1
+    assert client.get("/admin/stats").status_code == 401
+    st = client.get("/admin/stats", params={"token": "adm"}).json()
+    assert st["users"] == 1 and st["clips_24h"] == 1 and st["ratings_by_kind"]["chat"]["up"] == 1

@@ -61,6 +61,7 @@ export type Clip = {
   messages: string[];
   reason: string;
   title: string | null;
+  rating: number;
   kind: string;
   created: number;
   duration: number;
@@ -122,6 +123,7 @@ export const api = {
   search: (q: string, platform: PlatformId) =>
     call<Found[]>("GET", `/search?q=${encodeURIComponent(q)}&platform=${platform}`),
   popular: () => call<Found[]>("GET", "/popular"),
+  rate: (id: string, value: number) => call<{ ok: boolean }>("POST", `/clips/${encodeURIComponent(id)}/rate`, { value }),
   pushToken: (token: string) => call<{ ok: boolean }>("POST", "/push/token", { token }),
 };
 

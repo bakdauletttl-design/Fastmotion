@@ -47,6 +47,10 @@ EN = {
 }
 
 
+class RateIn(BaseModel):
+    value: int  # 1 нравится, -1 не нравится, 0 убрать оценку
+
+
 class PushIn(BaseModel):
     token: str
 
@@ -180,6 +184,12 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     def me(user=Depends(current_user)):
         return me_dict(user)
 
+    @app.post("/clips/{clip_id}/rate")
+    def rate(clip_id: str, body: RateIn, user=Depends(current_user)):
+        if not db.rate(clip_id, user["id"], body.value):
+            raise HTTPException(404, "Клип не найден")
+        return {"ok": True}
+
     @app.post("/push/token")
     def push_token(body: PushIn, user=Depends(current_user)):
         if not body.token.startswith(("ExponentPushToken[", "ExpoPushToken[")):
@@ -237,12 +247,13 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     @app.get("/clips")
     def clips(user=Depends(current_user)):
         out = []
+        rated = db.my_ratings(user["id"])
         for c in db.user_clips(user["id"]):
             base = f"{cfg.public_url}/clips/{c['id']}"
             src = from_key(c["channel"])
             out.append({"id": c["id"], "channel": src.name.lstrip("@"), "platform": src.platform,
                         "platform_title": src.title, "channel_key": c["channel"], "reason": c["reason"], "kind": c["kind"],
-                        "title": c["title"],
+                        "title": c["title"], "rating": rated.get(c["id"], 0),
                         "created": c["created"], "duration": c["duration"], "moment": c["moment"],
                         "messages": json.loads(c["messages"] or "[]"),
                         "video": f"{base}/video", "thumb": f"{base}/thumb" if c["thumb"] else None,
@@ -284,6 +295,13 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         return {"ok": True}
 
     # ---------- для владельца сервиса ----------
+    @app.get("/admin/stats")
+    def admin_stats(x_admin_token: str | None = Header(None), token: str | None = Query(None)):
+        """Цифры для владельца. Можно открыть в браузере: /admin/stats?token=ADMIN_TOKEN"""
+        if not cfg.admin_token or (x_admin_token or token) != cfg.admin_token:
+            raise HTTPException(401)
+        return db.stats()
+
     @app.post("/admin/block")
     def admin_block(body: ChannelIn, x_admin_token: str | None = Header(None)):
         """Стример попросил убрать свой канал: перестаём его нарезать для всех."""

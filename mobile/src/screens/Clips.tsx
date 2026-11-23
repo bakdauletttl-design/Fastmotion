@@ -40,6 +40,15 @@ async function download(url: string) {
 function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
   const [vertical, setVertical] = useState(!!clip.vertical);
   const [saving, setSaving] = useState(false);
+  const [rating, setRating] = useState(clip.rating ?? 0);
+
+  // 👍/👎 помогает нарезке понять, какие моменты людям нравятся
+  function rate(v: number) {
+    const next = rating === v ? 0 : v;
+    setRating(next);
+    clip.rating = next;
+    api.rate(clip.id, next).catch(() => null);
+  }
   const url = withToken(vertical && clip.vertical ? clip.vertical : clip.video);
   const player = useVideoPlayer(url, (p) => {
     p.loop = true;
@@ -85,6 +94,17 @@ function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
           value={vertical ? "v" : "h"}
           onChange={(v) => setVertical(v === "v")}
         />
+        <View style={{ flex: 1 }} />
+        {[1, -1].map((v) => (
+          <Pressable key={v} onPress={() => rate(v)}
+                     style={{ width: 40, height: 34, borderRadius: 999, alignItems: "center", justifyContent: "center",
+                              backgroundColor: rating === v ? c.accentDim : c.card,
+                              borderWidth: 1, borderColor: rating === v ? c.accent : c.line }}>
+            <P>{v > 0 ? "👍" : "👎"}</P>
+          </Pressable>
+        ))}
+      </View>
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
         {clip.moment != null && <Tag>{L("момент на", "moment at")} {time(clip.moment)}</Tag>}
       </View>
       <View style={{ flexDirection: "row", gap: 12, marginTop: 16 }}>

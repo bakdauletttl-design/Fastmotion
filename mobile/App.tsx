@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/react-native";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, SafeAreaView, Text, View } from "react-native";
@@ -9,7 +10,10 @@ import Clips from "./src/screens/Clips";
 import Login from "./src/screens/Login";
 import Plans from "./src/screens/Plans";
 import Telegram from "./src/screens/Telegram";
+import { SENTRY_DSN } from "./src/config";
 import { c } from "./src/ui";
+
+if (SENTRY_DSN) Sentry.init({ dsn: SENTRY_DSN, tracesSampleRate: 0.1, sendDefaultPii: false });
 import { L } from "./src/i18n";
 
 type Tab = "clips" | "channels" | "plans" | "account";
@@ -20,7 +24,7 @@ const TABS: [Tab, string][] = [
   ["account", L("Профиль", "Profile")],
 ];
 
-export default function App() {
+function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("clips");
@@ -102,3 +106,5 @@ export default function App() {
     </SafeAreaView>
   );
 }
+
+export default SENTRY_DSN ? Sentry.wrap(App) : App;
