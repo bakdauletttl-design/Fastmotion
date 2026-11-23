@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from .config import Config
@@ -21,15 +22,16 @@ HELP = (
     "/list — мои каналы\n"
     "/remove имя — перестать следить\n"
     "/plan — мой тариф\n"
+    "/buy — оплатить подписку звёздами Telegram\n"
     "/help — помощь"
 )
 
 FOLLOW_TEXT = {
     "ok": "Готово, слежу за {ch}. Как только начнётся стрим, клипы придут сюда.",
     "exists": "Ты уже следишь за {ch}.",
-    "limit": "На твоём тарифе можно следить за {n} каналами. Убери один через /remove или повысь тариф в приложении.",
+    "limit": "На твоём тарифе можно следить за {n} каналами. Убери один через /remove или повысь тариф: /buy",
     "blocked": "Стример {ch} попросил не нарезать его канал. Выбери другой.",
-    "no_plan": "Пробный период закончился. Оформи подписку в приложении HypeCut, и клипы снова будут приходить.",
+    "no_plan": "Пробный период закончился. Оформи подписку: /buy, и клипы снова будут приходить.",
 }
 
 
@@ -48,7 +50,13 @@ class Bot:
         return [[{"text": "Открыть приложение HypeCut", "url": self.cfg.app_url}]] if self.cfg.app_url else None
 
     async def handle(self, update: dict) -> None:
+        if "pre_checkout_query" in update:
+            await self._pre_checkout(update["pre_checkout_query"])
+            return
         msg = update.get("message") or {}
+        if msg.get("successful_payment"):
+            await self._paid(msg["chat"]["id"], msg["successful_payment"])
+            return
         chat = msg.get("chat") or {}
         text = (msg.get("text") or "").strip()
         if chat.get("type") != "private" or not text:
@@ -86,7 +94,10 @@ class Bot:
             else:
                 await self.api.send_message(chat_id, "Напиши так: /remove ссылка_на_канал (список: /list)")
         elif cmd == "/plan":
-            await self.api.send_message(chat_id, self._plan_text(user), self._app_buttons())
+            await self.api.send_message(chat_id, self._plan_text(user) + "\n\nПродлить или повысить тариф: /buy",
+                                        self._app_buttons())
+        elif cmd in ("/buy", "/subscribe"):
+            await self._offer(chat_id, user)
         elif cmd == "/add" or not cmd.startswith("/"):
             ch = normalize_channel(arg if cmd == "/add" else text)
             if not ch:
@@ -117,6 +128,60 @@ class Bot:
             self.db.x("UPDATE users SET telegram_chat_id=?, telegram_username=? WHERE id=?",
                       (chat_id, username, user["id"]))
         await self.api.send_message(chat_id, HELP, self._app_buttons())
+
+    # ---------- оплата звёздами Telegram ----------
+    async def _offer(self, chat_id: int, user) -> None:
+        buttons = []
+        for plan in (PLANS["standard"], PLANS["pro"]):
+            link = await self.api.create_subscription_link(
+                f"HypeCut {plan.title}",
+                f"{plan.channels} каналов, " + ("клипы без лимита" if plan.clips_per_stream is None
+                                                else f"до {plan.clips_per_stream} клипов за стрим") + ", 30 дней",
+                f"plan:{plan.id}:{user['id']}", plan.stars)
+            if link:
+                buttons.append([{"text": f"{plan.title} · {plan.stars} ⭐ в месяц", "url": link}])
+        if not buttons:
+            await self.api.send_message(chat_id, "Оплата сейчас недоступна, попробуй позже.")
+            return
+        await self.api.send_message(
+            chat_id,
+            "Подписка HypeCut оплачивается звёздами Telegram и продлевается сама каждые 30 дней. "
+            "Отменить можно в любой момент в настройках Telegram.\n\n"
+            f"Standard: {PLANS['standard'].channels} канала, до {PLANS['standard'].clips_per_stream} клипов за стрим, вертикальные клипы\n"
+            f"Pro: {PLANS['pro'].channels} каналов, клипы без лимита, первыми в очереди",
+            buttons)
+
+    @staticmethod
+    def _parse_payload(payload: str) -> tuple[str, int] | None:
+        parts = (payload or "").split(":")
+        if len(parts) != 3 or parts[0] != "plan" or parts[1] not in ("standard", "pro"):
+            return None
+        try:
+            return parts[1], int(parts[2])
+        except ValueError:
+            return None
+
+    async def _pre_checkout(self, q: dict) -> None:
+        parsed = self._parse_payload(q.get("invoice_payload", ""))
+        ok = (parsed is not None and q.get("currency") == "XTR"
+              and q.get("total_amount") == PLANS[parsed[0]].stars and self.db.user(parsed[1]) is not None)
+        await self.api.answer_pre_checkout(q["id"], ok, None if ok else "Счёт устарел, нажми /buy ещё раз.")
+
+    async def _paid(self, chat_id: int, pay: dict) -> None:
+        parsed = self._parse_payload(pay.get("invoice_payload", ""))
+        if parsed is None or pay.get("currency") != "XTR":
+            return
+        plan_id, uid = parsed
+        if self.db.user(uid) is None:
+            return
+        until = pay.get("subscription_expiration_date") or (time.time() + 30 * 86400)
+        self.db.set_plan(uid, plan_id, float(until))
+        self.db.x("INSERT INTO payments (user_id, plan, stars, charge_id, created) VALUES (?,?,?,?,?)",
+                  (uid, plan_id, pay.get("total_amount", 0), pay.get("telegram_payment_charge_id"), time.time()))
+        self._changed()
+        what = "продлена" if pay.get("is_recurring") and not pay.get("is_first_recurring") else "оформлена"
+        await self.api.send_message(chat_id, f"Спасибо! Подписка {PLANS[plan_id].title} {what} до "
+                                             f"{datetime.fromtimestamp(until):%d.%m.%Y}.")
 
     def _plan_text(self, user) -> str:
         plan = self.db.plan_of(user)

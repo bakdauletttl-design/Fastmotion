@@ -33,7 +33,7 @@ class TelegramAPI:
     async def get_updates(self, offset: int, timeout: int = 50) -> list[dict]:
         r = await self.client.post(self._url("getUpdates"),
                                    json={"offset": offset, "timeout": timeout,
-                                         "allowed_updates": ["message"]},
+                                         "allowed_updates": ["message", "pre_checkout_query"]},
                                    timeout=timeout + 15)
         body = r.json()
         return body.get("result", []) if body.get("ok") else []
@@ -64,6 +64,22 @@ class TelegramAPI:
             return False, None
         video = body["result"].get("video") or body["result"].get("document") or {}
         return True, video.get("file_id")
+
+    async def create_subscription_link(self, title: str, description: str, payload: str, stars: int) -> str | None:
+        """Ссылка на оплату подписки в Telegram Stars, продлевается сама каждые 30 дней."""
+        import json
+        body = await self.call("createInvoiceLink", {
+            "title": title, "description": description, "payload": payload, "currency": "XTR",
+            "prices": json.dumps([{"label": title, "amount": stars}]),
+            "subscription_period": "2592000",
+        })
+        return body.get("result") if body.get("ok") else None
+
+    async def answer_pre_checkout(self, query_id: str, ok: bool, error: str | None = None) -> None:
+        data = {"pre_checkout_query_id": query_id, "ok": "true" if ok else "false"}
+        if error:
+            data["error_message"] = error
+        await self.call("answerPreCheckoutQuery", data)
 
     async def close(self) -> None:
         await self.client.aclose()

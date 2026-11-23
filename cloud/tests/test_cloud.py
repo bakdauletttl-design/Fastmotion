@@ -26,6 +26,13 @@ class FakeTG:
         self.messages.append((chat_id, text))
         return True
 
+    async def create_subscription_link(self, title, description, payload, stars):
+        self.links = getattr(self, "links", []) + [(payload, stars)]
+        return f"https://t.me/$inv_{payload}"
+
+    async def answer_pre_checkout(self, query_id, ok, error=None):
+        self.checkouts = getattr(self, "checkouts", []) + [(query_id, ok)]
+
     async def send_video(self, chat_id, caption, path=None, file_id=None):
         if not file_id:
             self.uploads += 1
@@ -251,3 +258,29 @@ def test_telegram_api_reuses_file_id(tmp_path):
 
     asyncio.run(go())
     assert seen == [("/botT/sendVideo", True), ("/botT/sendVideo", False)]
+
+
+def test_telegram_stars_subscription(env):
+    cfg, db, tg = env
+    bot = Bot(cfg, db, tg)
+    asyncio.run(bot.handle(msg(77, "/start")))
+    uid = db.user_by_chat(77)["id"]
+    asyncio.run(bot.handle(msg(77, "/buy")))
+    assert tg.links == [(f"plan:standard:{uid}", 650), (f"plan:pro:{uid}", 1300)]
+
+    # Telegram спрашивает, можно ли принять оплату: неверная сумма отклоняется
+    asyncio.run(bot.handle({"pre_checkout_query": {"id": "q1", "currency": "XTR", "total_amount": 1,
+                                                   "invoice_payload": f"plan:pro:{uid}"}}))
+    asyncio.run(bot.handle({"pre_checkout_query": {"id": "q2", "currency": "XTR", "total_amount": 1300,
+                                                   "invoice_payload": f"plan:pro:{uid}"}}))
+    assert tg.checkouts == [("q1", False), ("q2", True)]
+
+    until = int(time.time()) + 30 * 86400
+    pay = {"currency": "XTR", "total_amount": 1300, "invoice_payload": f"plan:pro:{uid}",
+           "subscription_expiration_date": until, "is_recurring": True, "is_first_recurring": True,
+           "telegram_payment_charge_id": "ch1"}
+    asyncio.run(bot.handle({"message": {"chat": {"id": 77, "type": "private"}, "successful_payment": pay}}))
+    u = db.user(uid)
+    assert db.plan_of(u).id == "pro" and u["plan_until"] == until
+    assert "оформлена" in tg.messages[-1][1]
+    assert db.one("SELECT charge_id FROM payments")["charge_id"] == "ch1"

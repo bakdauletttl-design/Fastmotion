@@ -15,6 +15,7 @@ class Plan:
     clips_per_stream: int | None  # None = без лимита
     vertical: bool            # вертикальная версия для TikTok / Shorts / Reels
     priority: bool            # клипы режутся в первую очередь
+    stars: int = 0            # цена в Telegram Stars за 30 дней (для оплаты прямо в боте)
 
     def public(self) -> dict:
         return asdict(self)
@@ -22,8 +23,8 @@ class Plan:
 
 PLANS: dict[str, Plan] = {
     "trial": Plan("trial", "Пробный, 7 дней", 0.0, 1, 5, False, False),
-    "standard": Plan("standard", "Standard", 9.99, 3, 20, True, False),
-    "pro": Plan("pro", "Pro", 19.99, 10, None, True, True),
+    "standard": Plan("standard", "Standard", 9.99, 3, 20, True, False, stars=650),
+    "pro": Plan("pro", "Pro", 19.99, 10, None, True, True, stars=1300),
 }
 
 

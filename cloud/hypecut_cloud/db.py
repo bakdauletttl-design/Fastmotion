@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS deliveries (
     sent INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (clip_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    plan TEXT NOT NULL,
+    stars INTEGER NOT NULL,
+    charge_id TEXT,                  -- id платежа в Telegram, нужен для возврата
+    created REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS follows_channel ON follows(channel);
 CREATE INDEX IF NOT EXISTS deliveries_user ON deliveries(user_id, created);
 """
