@@ -69,7 +69,15 @@ CREATE TABLE IF NOT EXISTS clips (
     tg_file_id TEXT,                 -- после первой отправки Telegram отдаёт id, дальше шлём по нему
     tg_vertical_file_id TEXT,
     title TEXT,                      -- заголовок клипа (ИИ или по словам из чата)
-    transcript TEXT                  -- что говорил стример (распознанная речь)
+    transcript TEXT,                 -- что говорил стример (распознанная речь)
+    words TEXT,                      -- слова с таймингом (JSON) для субтитров
+    height INTEGER,                  -- качество исходника: 720, 1080, 1440...
+    trim_start REAL DEFAULT 0,       -- обычный клип короче длинного (Max): сколько отрезать в начале
+    trim_end REAL DEFAULT 0          -- и в конце
+);
+CREATE TABLE IF NOT EXISTS tg_files (
+    name TEXT PRIMARY KEY,           -- файл версии клипа (качество, длина, вертикаль)
+    file_id TEXT NOT NULL            -- id в Telegram: загружаем один раз, дальше шлём по нему
 );
 CREATE TABLE IF NOT EXISTS deliveries (
     clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
@@ -125,11 +133,13 @@ class DB:
 
     def _migrate(self) -> None:
         """Добавляет новые колонки в старую базу, чтобы обновление сервера не теряло данные."""
-        for table, cols in (("clips", ("title", "transcript")), ("users", ("lang",))):
+        for table, cols in (("clips", ("title", "transcript", "words", "height", "trim_start", "trim_end")),
+                            ("users", ("lang",))):
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col in cols:
                 if col not in have:
-                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                    kind = "REAL DEFAULT 0" if col.startswith("trim") else "INTEGER" if col == "height" else "TEXT"
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
 
     def q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self.lock:
@@ -175,6 +185,14 @@ class DB:
 
     def delete_user(self, uid: int) -> None:
         self.x("DELETE FROM users WHERE id=?", (uid,))
+
+    # ---------- файлы в Telegram ----------
+    def tg_file(self, name: str) -> str | None:
+        r = self.one("SELECT file_id FROM tg_files WHERE name=?", (name,))
+        return r["file_id"] if r else None
+
+    def set_tg_file(self, name: str, file_id: str) -> None:
+        self.x("INSERT OR REPLACE INTO tg_files VALUES (?,?)", (name, file_id))
 
     # ---------- оценки и статистика ----------
     def rate(self, clip_id: str, uid: int, value: int) -> bool:

@@ -3,13 +3,15 @@ import { API_URL } from "./config";
 import { L, LANG } from "./i18n";
 
 export type Plan = {
-  id: "trial" | "standard" | "pro";
+  id: "trial" | "standard" | "pro" | "max";
   title: string;
   price_usd: number;
   channels: number;
   clips_per_stream: number | null;
   vertical: boolean;
   priority: boolean;
+  height: number;
+  long_clips: boolean;
 };
 
 export type PlatformId = "twitch" | "youtube" | "kick" | "vk" | "tiktok";
@@ -65,6 +67,7 @@ export type Clip = {
   kind: string;
   created: number;
   duration: number;
+  quality: number;
   video: string;
   thumb: string | null;
   vertical: string | null;

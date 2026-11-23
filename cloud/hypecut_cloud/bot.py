@@ -9,7 +9,7 @@ from datetime import datetime
 from .config import Config
 from .db import DB, lang_of, normalize_channel
 from .sources import from_key
-from .plans import PLANS
+from .plans import PAID, PLANS
 from .telegram_api import TelegramAPI
 
 log = logging.getLogger(__name__)
@@ -164,7 +164,7 @@ class Bot:
     # ---------- оплата звёздами Telegram ----------
     async def _offer(self, chat_id: int, user) -> None:
         buttons = []
-        for plan in (PLANS["standard"], PLANS["pro"]):
+        for plan in (PLANS["standard"], PLANS["pro"], PLANS["max"]):
             link = await self.api.create_subscription_link(
                 f"HypeCut {plan.title}",
                 f"{plan.channels} " + self.t("каналов, ", "channels, ") + (
@@ -182,19 +182,21 @@ class Bot:
             self.t(
                 "Подписка HypeCut оплачивается звёздами Telegram и продлевается сама каждые 30 дней. "
                 "Отменить можно в любой момент в настройках Telegram.\n\n"
-                f"Standard: {PLANS['standard'].channels} канала, до {PLANS['standard'].clips_per_stream} клипов за стрим, "
+                f"Standard: 720p, {PLANS['standard'].channels} канала, до {PLANS['standard'].clips_per_stream} клипов за стрим, "
                 "вертикальные клипы с субтитрами\n"
-                f"Pro: {PLANS['pro'].channels} каналов, клипы без лимита, первыми в очереди",
+                f"Pro: 1080p, {PLANS['pro'].channels} каналов, до {PLANS['pro'].clips_per_stream} клипов за стрим, первыми в очереди\n"
+                f"Max: до 2K, {PLANS['max'].channels} каналов, до {PLANS['max'].clips_per_stream} клипов за стрим, клипы длиннее",
                 "HypeCut is paid with Telegram Stars and renews every 30 days. Cancel any time in Telegram settings.\n\n"
-                f"Standard: {PLANS['standard'].channels} channels, up to {PLANS['standard'].clips_per_stream} clips per stream, "
+                f"Standard: 720p, {PLANS['standard'].channels} channels, up to {PLANS['standard'].clips_per_stream} clips per stream, "
                 "vertical clips with captions\n"
-                f"Pro: {PLANS['pro'].channels} channels, unlimited clips, priority processing"),
+                f"Pro: 1080p, {PLANS['pro'].channels} channels, up to {PLANS['pro'].clips_per_stream} clips per stream, priority\n"
+                f"Max: up to 2K, {PLANS['max'].channels} channels, up to {PLANS['max'].clips_per_stream} clips per stream, longer clips"),
             buttons)
 
     @staticmethod
     def _parse_payload(payload: str) -> tuple[str, int] | None:
         parts = (payload or "").split(":")
-        if len(parts) != 3 or parts[0] != "plan" or parts[1] not in ("standard", "pro"):
+        if len(parts) != 3 or parts[0] != "plan" or parts[1] not in PAID:
             return None
         try:
             return parts[1], int(parts[2])

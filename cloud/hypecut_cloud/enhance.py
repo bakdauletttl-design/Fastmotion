@@ -160,24 +160,39 @@ def find_layout(video: Path, samples: int = 8) -> Layout:
     return Layout("split", box=(bx, by, bw - bw % 2, bh - bh % 2), src_w=sw, src_h=sh)
 
 
-def vertical_graph(layout: Layout) -> tuple[str, int]:
-    """Фильтр ffmpeg для 1080x1920 и высота, на которой ставить субтитры."""
+def vertical_graph(layout: Layout, width: int = W, height: int = H) -> tuple[str, int]:
+    """Фильтр ffmpeg для вертикали width x height и высота, на которой ставить субтитры."""
     if layout.kind == "split" and layout.box:
         x, y, w, h = layout.box
-        top, bottom = 640, H - 640
-        graph = (f"[0:v]crop={w}:{h}:{x}:{y},scale={W}:{top}:force_original_aspect_ratio=increase,"
-                 f"crop={W}:{top}[cam];"
-                 f"[0:v]scale=-2:{bottom},crop={W}:{bottom}[game];"
+        top = int(height / 3) // 2 * 2
+        bottom = height - top
+        graph = (f"[0:v]crop={w}:{h}:{x}:{y},scale={width}:{top}:force_original_aspect_ratio=increase,"
+                 f"crop={width}:{top}[cam];"
+                 f"[0:v]scale=-2:{bottom},crop={width}:{bottom}[game];"
                  "[cam][game]vstack=inputs=2,setsar=1[base]")
-        return graph, top + 140
+        return graph, top + int(height * 0.073)
     if layout.kind == "follow" and layout.cx is not None and layout.src_h:
         cw = int(layout.src_h * 9 / 16) // 2 * 2
         x = min(max(0, layout.cx - cw // 2), max(0, layout.src_w - cw))
-        graph = f"[0:v]crop={cw}:{layout.src_h}:{x}:0,scale={W}:{H},setsar=1[base]"
-        return graph, int(H * 0.72)
-    graph = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:5[bg];"
-             f"[0:v]scale={W}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]")
-    return graph, int(H * 0.74)
+        graph = f"[0:v]crop={cw}:{layout.src_h}:{x}:0,scale={width}:{height},setsar=1[base]"
+        return graph, int(height * 0.72)
+    graph = (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},boxblur=20:5[bg];"
+             f"[0:v]scale={width}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]")
+    return graph, int(height * 0.74)
+
+
+def size_for(h: int) -> tuple[int, int]:
+    """Размер вертикали для качества: 720 -> 720x1280, 1080 -> 1080x1920, 1440 -> 1440x2560."""
+    return h // 2 * 2, int(h * 16 / 9) // 2 * 2
+
+
+# потолок битрейта, чтобы клип пролезал в лимит Telegram для ботов (50 МБ)
+MAXRATE = {720: "3M", 1080: "6M", 1440: "8M"}
+
+
+def rate_args(h: int) -> list[str]:
+    cap = MAXRATE.get(h, "8M")
+    return ["-maxrate", cap, "-bufsize", str(int(cap[:-1]) * 2) + "M"]
 
 
 def _ass_path(p: Path) -> str:
@@ -185,16 +200,24 @@ def _ass_path(p: Path) -> str:
     return p.resolve().as_posix().replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
-def make_vertical(src: Path, out: Path, words: list[Word] | None = None) -> Path | None:
-    """Вертикальная 9:16 версия: вебка сверху или кадр по лицу, плюс субтитры."""
+def make_vertical(src: Path, out: Path, words: list[Word] | None = None, height: int = 1080,
+                  ss: float = 0.0, t: float | None = None) -> Path | None:
+    """Вертикальная 9:16 версия: вебка сверху или кадр по лицу, плюс субтитры.
+
+    height: качество (ширина вертикали), ss и t: с какой секунды и сколько взять из исходника.
+    """
     layout = find_layout(src)
-    graph, sub_y = vertical_graph(layout)
-    ass = write_ass(words or [], out.with_suffix(".ass"), y=sub_y)
+    vw, vh = size_for(height)
+    graph, sub_y = vertical_graph(layout, vw, vh)
+    shifted = [Word(w.start - ss, w.end - ss, w.text) for w in (words or [])
+               if w.end > ss and (t is None or w.start < ss + t)]
+    ass = write_ass(shifted, out.with_suffix(".ass"), vw, vh, y=sub_y)
     graph += f";[base]ass='{_ass_path(ass)}'[v]" if ass else ";[base]null[v]"
-    p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+    cut = (["-ss", f"{ss:.2f}"] if ss else []) + (["-t", f"{t:.2f}"] if t else [])
+    p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *cut, "-i", str(src),
                         "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-                        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)],
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", *rate_args(height),
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)],
                        capture_output=True)
     if ass:
         ass.unlink(missing_ok=True)
@@ -202,8 +225,33 @@ def make_vertical(src: Path, out: Path, words: list[Word] | None = None) -> Path
         log.warning("Не получилось сделать вертикальную версию (%s): %s", layout.kind,
                     p.stderr.decode(errors="replace")[-300:])
         return None
-    log.info("Вертикаль %s: %s, субтитров %d слов", out.name, layout.kind, len(words or []))
+    log.info("Вертикаль %s: %s %dx%d, субтитров %d слов", out.name, layout.kind, vw, vh, len(shifted))
     return out
+
+
+def make_horizontal(src: Path, out: Path, height: int, ss: float = 0.0, t: float | None = None) -> Path | None:
+    """Обычная 16:9 версия нужного качества и длины."""
+    cut = (["-ss", f"{ss:.2f}"] if ss else []) + (["-t", f"{t:.2f}"] if t else [])
+    p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *cut, "-i", str(src),
+                        "-vf", f"scale=-2:{height},setsar=1", "-c:v", "libx264", "-preset", "veryfast",
+                        "-crf", "21", *rate_args(height), "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)], capture_output=True)
+    if p.returncode != 0 or not out.exists():
+        log.warning("Не получилось сделать %dp версию: %s", height, p.stderr.decode(errors="replace")[-300:])
+        return None
+    return out
+
+
+def video_height(path: Path) -> int | None:
+    """Высота кадра исходника (ffprobe лежит рядом с ffmpeg)."""
+    ff = Path(FFMPEG)
+    probe = str(ff.with_name(ff.name.replace("ffmpeg", "ffprobe")))
+    try:
+        p = subprocess.run([probe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height",
+                            "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=30)
+        return int(p.stdout.strip().splitlines()[0])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
 
 
 # ---------- заголовок ----------

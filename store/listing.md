@@ -9,7 +9,7 @@
 - **Сайт поддержки:** https://ваш-домен/support (или ссылка на бота: https://t.me/HypeCut_bot)
 - **Политика конфиденциальности:** https://ваш-домен/privacy
 - **Условия использования:** https://ваш-домен/terms
-- **Подписки:** `hypecut_standard_monthly` ($9.99), `hypecut_pro_monthly` ($19.99), пробный период 7 дней
+- **Подписки:** `hypecut_standard_monthly` ($9.99), `hypecut_pro_monthly` ($19.99), `hypecut_max_monthly` ($49.99), пробный период 7 дней
 
 ## Русский
 
@@ -43,8 +43,9 @@ HypeCut смотрит стримы за тебя и присылает лучш
 
 ТАРИФЫ
 • Пробный: 7 дней бесплатно, 1 канал, до 5 клипов за стрим
-• Standard: 3 канала, до 20 клипов за стрим, вертикальные клипы
-• Pro: 10 каналов, клипы без лимита, первыми в очереди
+• Standard: 720p, 3 канала, до 20 клипов за стрим, вертикальные клипы с субтитрами
+• Pro: 1080p, 6 каналов, до 100 клипов за стрим, первыми в очереди
+• Max: до 2K, 10 каналов, до 200 клипов за стрим, клипы длиннее
 
 Подписка продлевается автоматически. Отменить можно в любой момент в настройках App Store или Google Play.
 
@@ -86,8 +87,9 @@ FEATURES
 
 PLANS
 • Trial: 7 days free, 1 channel, up to 5 clips per stream
-• Standard: 3 channels, up to 20 clips per stream, vertical clips
-• Pro: 10 channels, unlimited clips, first in the queue
+• Standard: 720p, 3 channels, up to 20 clips per stream, vertical clips with captions
+• Pro: 1080p, 6 channels, up to 100 clips per stream, priority processing
+• Max: up to 2K, 10 channels, up to 200 clips per stream, longer clips
 
 Subscriptions renew automatically. Cancel any time in App Store or Google Play settings.
 

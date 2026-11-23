@@ -11,10 +11,10 @@ from pathlib import Path
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import auth
+from . import auth, variants
 from .config import Config
 from .db import DB, normalize_channel
-from .plans import PLANS
+from .plans import PLANS, plan_from_product
 from .sources import PLATFORMS, from_key
 from .twitch import POPULAR, Twitch
 
@@ -248,16 +248,19 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     def clips(user=Depends(current_user)):
         out = []
         rated = db.my_ratings(user["id"])
+        plan = db.plan_of(user) or PLANS["trial"]
         for c in db.user_clips(user["id"]):
             base = f"{cfg.public_url}/clips/{c['id']}"
             src = from_key(c["channel"])
             out.append({"id": c["id"], "channel": src.name.lstrip("@"), "platform": src.platform,
                         "platform_title": src.title, "channel_key": c["channel"], "reason": c["reason"], "kind": c["kind"],
                         "title": c["title"], "rating": rated.get(c["id"], 0),
-                        "created": c["created"], "duration": c["duration"], "moment": c["moment"],
+                        "created": c["created"], "duration": variants.duration_for(c, plan.long_clips),
+                        "moment": variants.moment_for(c, plan.long_clips),
+                        "quality": variants.want_for(plan, c).height,
                         "messages": json.loads(c["messages"] or "[]"),
                         "video": f"{base}/video", "thumb": f"{base}/thumb" if c["thumb"] else None,
-                        "vertical": f"{base}/vertical" if c["vertical_file"] else None})
+                        "vertical": f"{base}/vertical" if plan.vertical else None})
         return out
 
     @app.get("/clips/{clip_id}/{kind}")
@@ -265,8 +268,14 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         c = db.clip(clip_id)
         if c is None or not db.has_clip(user["id"], clip_id):
             raise HTTPException(404, "Клип не найден")
-        name = {"video": c["file"], "vertical": c["vertical_file"], "thumb": c["thumb"]}.get(kind)
-        path = cfg.clips_dir / name if name else None
+        plan = db.plan_of(user) or PLANS["trial"]
+        if kind == "thumb":
+            path = cfg.clips_dir / c["thumb"] if c["thumb"] else None
+        elif kind in ("video", "vertical"):
+            # версия под тариф: качество и длина; делается при первом запросе
+            path = variants.path_for(cfg.clips_dir, c, variants.want_for(plan, c, vertical=kind == "vertical"))
+        else:
+            path = None
         if path is None or not path.exists():
             raise HTTPException(404, "Файл уже удалён с сервера, он есть в Telegram")
         return FileResponse(path)
@@ -285,7 +294,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             return {"ok": True, "ignored": "unknown user"}
         kind = event.get("type", "")
         ids = " ".join([event.get("product_id") or "", *(event.get("entitlement_ids") or [])]).lower()
-        plan = "pro" if "pro" in ids else "standard" if "standard" in ids else None
+        plan = plan_from_product(ids)
         if kind in ("INITIAL_PURCHASE", "RENEWAL", "PRODUCT_CHANGE", "UNCANCELLATION", "NON_RENEWING_PURCHASE") and plan:
             until = (event.get("expiration_at_ms") or 0) / 1000 or time.time() + 31 * 86400
             db.set_plan(uid, plan, until)

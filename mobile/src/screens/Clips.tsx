@@ -105,6 +105,7 @@ function Player({ clip, onClose }: { clip: Clip; onClose: () => void }) {
         ))}
       </View>
       <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+        {clip.quality ? <Tag>{clip.quality >= 1440 ? "2K" : `${clip.quality}p`}</Tag> : null}
         {clip.moment != null && <Tag>{L("момент на", "moment at")} {time(clip.moment)}</Tag>}
       </View>
       <View style={{ flexDirection: "row", gap: 12, marginTop: 16 }}>

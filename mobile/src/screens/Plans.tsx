@@ -20,18 +20,26 @@ function setupPurchases(userId: number): boolean {
 }
 
 const FEATURES: Record<string, string[]> = {
-  trial: [L("1 канал", "1 channel"), L("до 5 клипов за стрим", "up to 5 clips per stream"), L("клипы в Telegram", "clips in Telegram")],
+  trial: [L("1 канал", "1 channel"), L("до 5 клипов за стрим", "up to 5 clips per stream"), "720p", L("клипы в Telegram", "clips in Telegram")],
   standard: [
+    "720p",
     L("3 канала", "3 channels"),
     L("до 20 клипов за стрим", "up to 20 clips per stream"),
     L("вертикальные клипы с субтитрами для TikTok, Shorts, Reels", "vertical clips with captions for TikTok, Shorts, Reels"),
-    L("заголовки к клипам", "clip titles"),
   ],
   pro: [
-    L("10 каналов", "10 channels"),
-    L("клипы без лимита", "unlimited clips"),
+    "1080p",
+    L("6 каналов", "6 channels"),
+    L("до 100 клипов за стрим", "up to 100 clips per stream"),
     L("всё из Standard", "everything in Standard"),
     L("клипы режутся в первую очередь", "priority processing"),
+  ],
+  max: [
+    L("до 2K (1440p), если стример даёт такое качество", "up to 2K (1440p) when the stream has it"),
+    L("10 каналов", "10 channels"),
+    L("до 200 клипов за стрим", "up to 200 clips per stream"),
+    L("клипы длиннее: +15 секунд", "longer clips: +15 seconds"),
+    L("всё из Pro", "everything in Pro"),
   ],
 };
 
@@ -48,7 +56,8 @@ export default function Plans({ me, onChange }: { me: Me; onChange: () => void }
           const map: Record<string, PurchasesPackage> = {};
           for (const p of o.current?.availablePackages ?? []) {
             const id = p.product.identifier.toLowerCase();
-            if (id.includes("pro")) map.pro = p;
+            if (id.includes("max")) map.max = p;
+            else if (id.includes("pro")) map.pro = p;
             else if (id.includes("standard")) map.standard = p;
           }
           setPackages(map);

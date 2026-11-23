@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import subprocess
 import time
 from collections import deque
@@ -15,7 +16,7 @@ from hypecut.chat import chat_messages
 from hypecut.clipper import build_clip, make_thumbnail, mean_volume
 from hypecut.detector import AudioPeakDetector, ChatSpikeDetector, Trigger
 
-from . import enhance
+from . import enhance, variants
 from .config import Config
 from .db import DB, is_en
 from .plans import can_receive
@@ -25,16 +26,13 @@ from .telegram_api import TelegramAPI
 log = logging.getLogger(__name__)
 
 
-async def make_vertical(src: Path, out: Path, words=None) -> Path | None:
-    return await asyncio.to_thread(enhance.make_vertical, src, out, words)
-
-
 class SourceRecorder(StreamRecorder):
     """Запись с любой площадки: сначала streamlink, а если он не справился, ссылку на поток даёт yt-dlp."""
 
-    def __init__(self, source: Source, *args):
+    def __init__(self, source: Source, *args, max_height: int = 1080):
         super().__init__(source.name, *args)
         self.source = source
+        self.max_height = max_height
 
     def open_stream(self):
         from streamlink import Streamlink
@@ -54,8 +52,21 @@ class SourceRecorder(StreamRecorder):
             streams = session.streams(("hls://" if ".m3u8" in direct else "httpstream://") + direct)
             if not streams:
                 raise StreamOffline()
-        stream = streams.get(self.quality) or streams.get("best")
+        stream = streams.get(pick_quality(list(streams), self.max_height)) or streams.get("best")
         return stream.open()
+
+
+def pick_quality(names: list[str], max_height: int) -> str:
+    """Лучшее качество не выше нужного: из 1440p60, 1080p60, 720p60... для тарифа 1080 выберет 1080p60."""
+    best, best_key = "best", (0, 0)
+    for n in names:
+        m = re.match(r"^(\d+)p(\d+)?", n)
+        if not m:
+            continue
+        key = (int(m.group(1)), int(m.group(2) or 30))
+        if key[0] <= max_height and key > best_key:
+            best, best_key = n, key
+    return best
 
 
 def _ytdlp_url(url: str) -> str | None:
@@ -97,12 +108,11 @@ class Dispatcher:
                                          {"channel": channel})
         return len(users)
 
-    def needs_vertical(self, channel: str) -> bool:
-        for u in self.db.followers(channel):
-            plan = self.db.plan_of(u)
-            if plan and plan.vertical:
-                return True
-        return False
+    def needs(self, channel: str) -> variants.Want:
+        """Что нужно подписчикам канала: лучшее качество, длинные клипы, вертикаль."""
+        plans = [p for p in (self.db.plan_of(u) for u in self.db.followers(channel)) if p]
+        return variants.Want(max([p.height for p in plans], default=720),
+                             any(p.long_clips for p in plans), any(p.vertical for p in plans))
 
     async def deliver(self, clip_id: str) -> int:
         clip = self.db.clip(clip_id)
@@ -110,8 +120,6 @@ class Dispatcher:
             return 0
         src = from_key(clip["channel"])
         head = f"🔥 {clip['title']}\n" if clip["title"] else ""
-        caption = (f"{head}HypeCut · {src.name.lstrip('@')} ({src.title})\n{clip['reason']} · "
-                   f"{datetime.fromtimestamp(clip['created']):%H:%M}\n{src.public()['url']}")
         got: list[int] = []
         for user in self.db.followers(clip["channel"]):
             plan = self.db.plan_of(user)
@@ -119,14 +127,17 @@ class Dispatcher:
                 continue
             ok = False
             if self.api and user["telegram_chat_id"]:
-                vertical = bool(plan.vertical and clip["vertical_file"])
-                col = "tg_vertical_file_id" if vertical else "tg_file_id"
-                fname = clip["vertical_file"] if vertical else clip["file"]
-                clip = self.db.clip(clip_id)  # file_id мог появиться после прошлой отправки
-                ok, fid = await self.api.send_video(user["telegram_chat_id"], caption,
-                                                    path=self.cfg.clips_dir / fname, file_id=clip[col])
-                if ok and fid and not clip[col]:
-                    self.db.set_clip(clip_id, **{col: fid})
+                path, w = await asyncio.to_thread(variants.for_telegram, self.cfg.clips_dir, clip,
+                                                  variants.want_for(plan, clip))
+                if path:
+                    name = path.name
+                    caption = (f"{head}HypeCut · {src.name.lstrip('@')} ({src.title}) · {w.height}p\n"
+                               f"{clip['reason']} · {datetime.fromtimestamp(clip['created']):%H:%M}\n"
+                               f"{src.public()['url']}")
+                    cached = self.db.tg_file(name)
+                    ok, fid = await self.api.send_video(user["telegram_chat_id"], caption, path=path, file_id=cached)
+                    if ok and fid and not cached:
+                        self.db.set_tg_file(name, fid)
             # клип в приложении виден в любом случае, даже если Telegram не ответил
             self.db.add_delivery(clip_id, user["id"], clip["stream_id"], ok)
             got.append(user["id"])
@@ -139,12 +150,15 @@ class Dispatcher:
 class ChannelWorker:
     """Следит за одним каналом: ждёт эфир, пишет буфер, ловит всплески чата и звука, режет клипы."""
 
-    def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, channel: str, recorder=None, twitch=None):
+    def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, channel: str, recorder=None, twitch=None,
+                 max_height: int = 720):
         self.cfg, self.db, self.dispatcher, self.channel = cfg, db, dispatcher, channel
         self.twitch = twitch
+        self.max_height = max_height  # в каком качестве писать стрим: лучшее, что нужно подписчикам
         self.source = from_key(channel)
+        # буфер с запасом под длинные клипы Max
         self.recorder = recorder or SourceRecorder(self.source, cfg.quality, cfg.buffers_dir / self.source.safe,
-                                                   cfg.segment_seconds, cfg.buffer_seconds)
+                                                   cfg.segment_seconds, cfg.buffer_seconds, max_height=max_height)
         self.chat = ChatSpikeDetector(cfg.chat_window, cfg.chat_multiplier, cfg.chat_min_messages, cfg.hype_words)
         self.audio = AudioPeakDetector(cfg.audio_db_above)
         self._last = 0.0
@@ -233,7 +247,9 @@ class ChannelWorker:
 
     async def make_clip(self, trig: Trigger) -> str | None:
         cfg = self.cfg
-        start, end = trig.at - cfg.pre_roll, trig.at + cfg.post_roll
+        need = self.dispatcher.needs(self.channel)
+        extra_pre, extra_post = (cfg.long_extra_pre, cfg.long_extra_post) if need.long else (0.0, 0.0)
+        start, end = trig.at - cfg.pre_roll - extra_pre, trig.at + cfg.post_roll + extra_post
         wait = end - time.time() + cfg.segment_seconds + 1
         if wait > 0:
             await asyncio.sleep(wait)
@@ -251,24 +267,27 @@ class ChannelWorker:
             log.exception("Не удалось собрать клип %s", clip_id)
             return None
         thumb = await make_thumbnail(out, out.with_suffix(".jpg"))
+        height = await asyncio.to_thread(enhance.video_height, out)
         chat = [f"{n}: {m}" for t, n, m in self.messages if trig.at - 12 <= t <= trig.at + 4][-8:]
         # речь стримера: для субтитров в вертикали и для заголовка
         words = await asyncio.to_thread(enhance.transcribe, out)
         transcript = " ".join(w.text for w in words)
         title = await asyncio.to_thread(enhance.make_title, self.source.name.lstrip("@"), transcript,
                                         chat, trig.reason)
-        vertical = None
-        if self.dispatcher.needs_vertical(self.channel):
-            vertical = await make_vertical(out, out.with_name(f"{clip_id}_9x16.mp4"), words)
+        real_start = max(start, segments[0].start)
+        duration = round(end - real_start, 1)
+        # обычная версия короче длинной: столько отрезать в начале и в конце
+        trim_start = round(max(0.0, trig.at - cfg.pre_roll - real_start), 2) if need.long else 0.0
+        trim_end = round(extra_post, 2) if need.long else 0.0
         self.db.add_clip(id=clip_id, channel=self.channel, stream_id=self.stream_id, file=out.name,
-                         vertical_file=vertical.name if vertical else None,
                          thumb=thumb.name if thumb else None, reason=trig.reason, kind=trig.kind,
-                         created=trig.at, duration=round(end - max(start, segments[0].start), 1),
-                         moment=round(trig.at - max(start, segments[0].start), 1),
+                         created=trig.at, duration=duration, moment=round(trig.at - real_start, 1),
                          messages=json.dumps(chat, ensure_ascii=False), title=title,
-                         transcript=transcript or None)
+                         transcript=transcript or None,
+                         words=json.dumps([[w.start, w.end, w.text] for w in words], ensure_ascii=False),
+                         height=height, trim_start=trim_start, trim_end=trim_end)
         count = await self.dispatcher.deliver(clip_id)
-        log.info("Клип %s разослан %d подписчикам", clip_id, count)
+        log.info("Клип %s (%sp) разослан %d подписчикам", clip_id, height, count)
         return clip_id
 
 
@@ -278,7 +297,8 @@ class Manager:
     def __init__(self, cfg: Config, db: DB, dispatcher: Dispatcher, worker_factory=None, twitch=None):
         self.cfg, self.db, self.dispatcher = cfg, db, dispatcher
         self.workers: dict[str, ChannelWorker] = {}
-        self._factory = worker_factory or (lambda ch: ChannelWorker(cfg, db, dispatcher, ch, twitch=twitch))
+        self._factory = worker_factory or (lambda ch: ChannelWorker(
+            cfg, db, dispatcher, ch, twitch=twitch, max_height=dispatcher.needs(ch).height))
         self._wake = asyncio.Event()
 
     def status(self, key: str) -> dict:
@@ -296,6 +316,11 @@ class Manager:
             if ch not in wanted:
                 await self.workers.pop(ch).stop()
         for ch in wanted:
+            w = self.workers.get(ch)
+            # подписчику нужно качество выше: перезапускаем запись, но только между эфирами
+            if w is not None and not w.recorder.live and \
+                    self.dispatcher.needs(ch).height > getattr(w, "max_height", 10 ** 6):
+                await self.workers.pop(ch).stop()
             if ch not in self.workers:
                 w = self._factory(ch)
                 w.start()
@@ -308,6 +333,8 @@ class Manager:
             for name in (c["file"], c["vertical_file"], c["thumb"]):
                 if name:
                     (self.cfg.clips_dir / name).unlink(missing_ok=True)
+            for f in variants.all_files(self.cfg.clips_dir, c["id"]):
+                f.unlink(missing_ok=True)
             self.db.delete_clip(c["id"])
             removed += 1
         return removed

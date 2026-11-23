@@ -87,7 +87,12 @@ def test_effective_plan():
     assert effective_plan("pro", now + 10, now - 10, now).id == "pro"
     assert effective_plan("pro", now - 10, now - 10, now) is None  # подписка закончилась
     assert can_receive(PLANS["trial"], 4) and not can_receive(PLANS["trial"], 5)
-    assert can_receive(PLANS["pro"], 10_000)
+    assert can_receive(PLANS["pro"], 99) and not can_receive(PLANS["pro"], 100)
+    assert effective_plan("max", now + 10, None, now).height == 1440
+    assert [PLANS[p].channels for p in ("standard", "pro", "max")] == [3, 6, 10]
+    assert [PLANS[p].clips_per_stream for p in ("standard", "pro", "max")] == [20, 100, 200]
+    from hypecut_cloud.plans import plan_from_product
+    assert plan_from_product("hypecut_max_monthly") == "max" and plan_from_product("x") is None
 
 
 def test_app_flow_login_link_follow(env):
@@ -193,7 +198,9 @@ def test_clip_made_once_and_sent_to_all_followers_with_limits(env, tmp_path):
     clip_id = asyncio.run(w.make_clip(Trigger(at=segs[-1].end, reason="чат x5", score=5, kind="chat")))
     assert clip_id
     c = db.clip(clip_id)
-    assert (cfg.clips_dir / c["file"]).exists() and c["vertical_file"]  # есть Pro: делаем 9:16
+    assert (cfg.clips_dir / c["file"]).exists() and c["height"]
+    from hypecut_cloud import variants
+    assert any(f.name.endswith("_9x16.mp4") for f in variants.all_files(cfg.clips_dir, clip_id))  # Pro: 9:16
     assert sorted(ch for ch, _ in tg.videos) == [1, 3]
     assert tg.uploads == 1  # файл загружен в Telegram один раз, второму отправлен по file_id
 
@@ -268,7 +275,8 @@ def test_telegram_stars_subscription(env):
     asyncio.run(bot.handle(msg(77, "/start")))
     uid = db.user_by_chat(77)["id"]
     asyncio.run(bot.handle(msg(77, "/buy")))
-    assert tg.links == [(f"plan:standard:{uid}", 650), (f"plan:pro:{uid}", 1300)]
+    assert tg.links == [(f"plan:standard:{uid}", 650), (f"plan:pro:{uid}", 1300),
+                        (f"plan:max:{uid}", 3250)]
 
     # Telegram спрашивает, можно ли принять оплату: неверная сумма отклоняется
     asyncio.run(bot.handle({"pre_checkout_query": {"id": "q1", "currency": "XTR", "total_amount": 1,
@@ -415,3 +423,52 @@ def test_ratings_and_owner_stats(env):
     assert client.get("/admin/stats").status_code == 401
     st = client.get("/admin/stats", params={"token": "adm"}).json()
     assert st["users"] == 1 and st["clips_24h"] == 1 and st["ratings_by_kind"]["chat"]["up"] == 1
+
+
+def test_quality_tiers_and_long_clips_for_max(env, tmp_path):
+    from hypecut_cloud import variants
+    from hypecut_cloud.worker import pick_quality
+
+    names = ["audio_only", "160p", "480p", "720p60", "1080p60", "1440p60", "best", "worst"]
+    assert pick_quality(names, 720) == "720p60"
+    assert pick_quality(names, 1080) == "1080p60"
+    assert pick_quality(names, 1440) == "1440p60"
+    assert pick_quality(["best", "worst"], 1080) == "best"
+
+    cfg, db, tg = env
+    cfg.pre_roll, cfg.post_roll, cfg.segment_seconds = 4, 0, 0
+    cfg.long_extra_pre, cfg.long_extra_post = 4, 0
+    segs = _make_segments(tmp_path)  # 12 секунд 320x240
+    ids = {}
+    for plan, chat in (("max", 11), ("standard", 12)):
+        u = db.upsert_user("dev", plan)
+        db.x("UPDATE users SET telegram_chat_id=? WHERE id=?", (chat, u["id"]))
+        db.set_plan(u["id"], plan, time.time() + 86400)
+        db.follow(u["id"], "twitch:streamer")
+        ids[plan] = u["id"]
+
+    disp = Dispatcher(cfg, db, tg)
+    need = disp.needs("twitch:streamer")
+    assert need.height == 1440 and need.long and need.vertical
+    w = ChannelWorker(cfg, db, disp, "twitch:streamer", recorder=FakeRecorder(segs))
+    clip_id = asyncio.run(w.make_clip(Trigger(at=segs[-1].end, reason="чат x5", score=5, kind="chat")))
+    c = db.clip(clip_id)
+    assert c["height"] == 240 and c["trim_start"] > 0  # Max получил клип длиннее
+    assert variants.duration_for(c, True) > variants.duration_for(c, False)
+    assert tg.uploads == 2  # длинная версия для Max и обычная для Standard: разные файлы
+
+    from hypecut_cloud.auth import issue_session
+    client = TestClient(create_app(cfg, db))
+    long_clip = client.get("/clips", headers={"Authorization": f"Bearer {issue_session(ids['max'], SECRET)}"}).json()[0]
+    short_clip = client.get("/clips", headers={"Authorization": f"Bearer {issue_session(ids['standard'], SECRET)}"}).json()[0]
+    assert long_clip["duration"] > short_clip["duration"] and long_clip["quality"] == 240
+
+    # если версия не влезает в лимит Telegram, берётся качество ниже
+    big = variants.Want(1440, False, False)
+    real_limit = variants.TG_LIMIT
+    try:
+        variants.TG_LIMIT = 0
+        path, used = variants.for_telegram(cfg.clips_dir, c, big)
+        assert path is None
+    finally:
+        variants.TG_LIMIT = real_limit

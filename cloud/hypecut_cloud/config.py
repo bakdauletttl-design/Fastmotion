@@ -28,9 +28,11 @@ class Config:
     quality: str = field(default_factory=lambda: os.environ.get("STREAM_QUALITY", "720p60"))
     # параметры нарезки, как в настольной версии
     segment_seconds: int = 4
-    buffer_seconds: int = 180
+    buffer_seconds: int = 240
     pre_roll: float = 20.0
     post_roll: float = 10.0
+    long_extra_pre: float = 10.0   # тариф Max: клип длиннее на 10 секунд до момента
+    long_extra_post: float = 5.0   # и на 5 секунд после
     cooldown: float = 45.0
     chat_window: int = 10
     chat_multiplier: float = 3.0
