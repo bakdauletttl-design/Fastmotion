@@ -1,10 +1,11 @@
-// Стиль HypeCut: тёмный фон, белый текст, неоново-зелёный акцент (в духе Higgsfield)
+// Стиль HypeCut: тёмный фон, светлый текст, изумрудный акцент
 import React from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from "react-native";
 
+// Цвета синхронизированы с фирменными токенами HypeCut (hypecut/static/brand.css), акцент изумрудный
 export const c = {
-  bg: "#0A0A0A", fg: "#FFFFFF", dim: "#8C8C8C", line: "#222222", card: "#141414",
-  accent: "#C6FF3D", accentDim: "rgba(198,255,61,0.12)", onAccent: "#0A0A0A", danger: "#FF5A5A",
+  bg: "#07080A", fg: "#F4F6F3", dim: "#8C948F", line: "rgba(255,255,255,0.08)", card: "#0F1113",
+  accent: "#2EE59D", accentDim: "rgba(46,229,157,0.12)", onAccent: "#00140C", danger: "#FF5A5A",
 };
 
 export function Button(props: {
