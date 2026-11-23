@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 
-TRIAL_DAYS = 7
+TRIAL_DAYS = 3
 
 
 @dataclass(frozen=True)
@@ -18,16 +18,17 @@ class Plan:
     stars: int = 0            # цена в Telegram Stars за 30 дней (для оплаты прямо в боте)
     height: int = 720         # качество клипа: 720, 1080 или 1440 (2K), но не выше, чем у самого стрима
     long_clips: bool = False  # клипы длиннее: +10 секунд до момента и +5 после
+    max_seconds: int = 30     # самый длинный клип, который можно вырезать кнопкой «Клип» и в монтаже
 
     def public(self) -> dict:
         return asdict(self)
 
 
 PLANS: dict[str, Plan] = {
-    "trial": Plan("trial", "Пробный, 7 дней", 0.0, 1, 5, False, False, height=720),
-    "standard": Plan("standard", "Standard", 9.99, 3, 20, True, False, stars=650, height=720),
-    "pro": Plan("pro", "Pro", 19.99, 6, 100, True, True, stars=1300, height=1080),
-    "max": Plan("max", "Max", 49.99, 10, 200, True, True, stars=3250, height=1440, long_clips=True),
+    "trial": Plan("trial", "Пробный, 3 дня", 0.0, 1, 5, False, False, height=720, max_seconds=30),
+    "standard": Plan("standard", "Standard", 10.0, 3, 20, True, False, stars=650, height=720, max_seconds=60),
+    "pro": Plan("pro", "Pro", 20.0, 5, 50, True, True, stars=1300, height=1080, max_seconds=90),
+    "max": Plan("max", "Max", 50.0, 10, 100, True, True, stars=3250, height=1440, long_clips=True, max_seconds=120),
 }
 
 

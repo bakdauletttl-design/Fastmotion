@@ -87,10 +87,10 @@ def test_effective_plan():
     assert effective_plan("pro", now + 10, now - 10, now).id == "pro"
     assert effective_plan("pro", now - 10, now - 10, now) is None  # подписка закончилась
     assert can_receive(PLANS["trial"], 4) and not can_receive(PLANS["trial"], 5)
-    assert can_receive(PLANS["pro"], 99) and not can_receive(PLANS["pro"], 100)
+    assert can_receive(PLANS["pro"], 49) and not can_receive(PLANS["pro"], 50)
     assert effective_plan("max", now + 10, None, now).height == 1440
-    assert [PLANS[p].channels for p in ("standard", "pro", "max")] == [3, 6, 10]
-    assert [PLANS[p].clips_per_stream for p in ("standard", "pro", "max")] == [20, 100, 200]
+    assert [PLANS[p].channels for p in ("standard", "pro", "max")] == [3, 5, 10]
+    assert [PLANS[p].clips_per_stream for p in ("standard", "pro", "max")] == [20, 50, 100]
     from hypecut_cloud.plans import plan_from_product
     assert plan_from_product("hypecut_max_monthly") == "max" and plan_from_product("x") is None
 
@@ -526,3 +526,31 @@ def test_watch_live_cut_edit_and_send(env, tmp_path):
     assert client.get(f"/highlights/{hl['id']}?token={issue_session(other['id'], SECRET)}").status_code == 404
     assert client.post(f"/highlights/{hl['id']}/telegram", headers=h).json()["ok"]
     assert client.post("/highlights", headers=h, json={"parts": []}).status_code == 400
+
+    # монтаж: исправленные субтитры, шрифт, своя музыка и видео поверх
+    ed2 = client.post(f"/clips/{clip['id']}/edit", headers=h, json={
+        "start": 0, "end": 4, "vertical": True, "font": "russo",
+        "words": [[0.2, 0.8, "ПРИВЕТ"], [0.9, 1.5, "МИР"]]}).json()
+    assert ed2["id"] != ed["id"]
+    snd, ov = tmp_path / "m.m4a", tmp_path / "o.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=880:d=3", str(snd)], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:d=2:r=15",
+                    "-c:v", "libx264", str(ov)], check=True)
+    music = client.post("/uploads?kind=audio", headers=h, content=snd.read_bytes()).json()["id"]
+    over = client.post("/uploads?kind=video", headers=h, content=ov.read_bytes()).json()["id"]
+    assert client.post("/uploads?kind=audio", headers=h, content=b"not a file").status_code == 400
+    ed3 = client.post(f"/clips/{clip['id']}/edit", headers=h, json={
+        "start": 0, "end": 4, "vertical": True, "music": music, "overlay": over, "overlay_pos": "corner"}).json()
+    assert client.get(ed3["video"].replace("http://x", "") + f"?token={tok}").status_code == 200
+    assert client.post(f"/clips/{clip['id']}/edit", headers=h,
+                       json={"start": 0, "end": 4, "music": "audio_000000000000"}).status_code == 404
+    hl2 = client.post("/highlights", headers=h, json={"vertical": False, "transition": "fade", "music": music, "parts": [
+        {"clip": clip["id"], "start": 0, "end": 3}, {"clip": clip["id"], "start": 4, "end": 7}]}).json()
+    assert client.get(f"/highlights/{hl2['id']}?token={tok}").status_code == 200
+
+    # ❤️ и расход в профиле
+    assert client.post(f"/clips/{clip['id']}/fav", headers=h, json={"on": True}).json()["ok"]
+    assert client.get("/clips", headers=h).json()[0]["fav"] is True
+    usage = client.get("/me", headers=h).json()["usage"]
+    assert usage["my_clips_month"] == 1 and usage["channels"] == 1
+    assert db.old_clips(time.time() + 10) == []  # любимый клип не удаляется

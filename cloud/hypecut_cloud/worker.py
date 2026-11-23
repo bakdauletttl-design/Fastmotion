@@ -332,7 +332,8 @@ class Manager:
     def status(self, key: str) -> dict:
         """Идёт ли сейчас эфир у канала и сколько клипов сделано за последние 12 часов."""
         w = self.workers.get(key)
-        return {"live": bool(w and w.recorder.live),
+        live = bool(w and w.recorder.live)
+        return {"live": live, "stream_id": w.stream_id if live else None,
                 "clips_recent": self.db.clips_since(key, time.time() - 12 * 3600)}
 
     def poke(self) -> None:
@@ -366,7 +367,7 @@ class Manager:
             self.db.delete_clip(c["id"])
             removed += 1
         old = time.time() - self.cfg.clip_keep_days * 86400
-        for f in (self.cfg.clips_dir / "highlights").glob("hl_*.mp4"):
+        for f in [*(self.cfg.clips_dir / "highlights").glob("hl_*.mp4"), *(self.cfg.clips_dir / "uploads").glob("u*")]:
             if f.stat().st_mtime < old:
                 f.unlink(missing_ok=True)
         return removed

@@ -59,7 +59,15 @@ EN = {
     "Сначала подключи Telegram": "Connect Telegram first",
     "Telegram не принял видео": "Telegram did not accept the video",
     "В хайлайтах от 1 до 12 моментов": "Highlights take 1 to 12 moments",
+    "Файл не найден, загрузи его ещё раз": "File not found, please upload it again",
+    "Можно загрузить только музыку или видео": "You can upload only music or video",
+    "Файл слишком большой": "The file is too large",
+    "Не получилось прочитать файл": "Could not read the file",
 }
+
+
+class FavIn(BaseModel):
+    on: bool = True
 
 
 class RateIn(BaseModel):
@@ -75,12 +83,22 @@ class CutIn(BaseModel):
     behind: float = 0       # на сколько плеер отстаёт от самого свежего куска
 
 
-class EditIn(BaseModel):
+class Style(BaseModel):
+    """Оформление в монтаже: шрифт, своя музыка, своё видео поверх."""
+    font: str = "classic"          # classic | russo | rubik | lobster | pixel
+    music: str | None = None       # id загруженного аудио (/uploads)
+    music_volume: float = 0.35
+    overlay: str | None = None     # id загруженного видео, которое встанет поверх клипа
+    overlay_pos: str = "top"       # top: крупно сверху, corner: маленьким окном в углу
+
+
+class EditIn(Style):
     start: float = 0               # секунда начала внутри клипа
     end: float | None = None       # секунда конца (None: до конца)
     vertical: bool = True          # 9:16: вебка сверху, игра снизу
     subtitles: bool = True
     title: str | None = None       # None: заголовок клипа, "": без заголовка
+    words: list[tuple[float, float, str]] | None = None  # исправленные субтитры (секунды исходного клипа)
 
 
 class PartIn(BaseModel):
@@ -89,11 +107,12 @@ class PartIn(BaseModel):
     end: float | None = None
 
 
-class HighlightIn(BaseModel):
+class HighlightIn(Style):
     parts: list[PartIn]
     vertical: bool = True
     subtitles: bool = True
     title: str | None = None
+    transition: str = "none"       # none | fade | slide | zoom | wipe | flash
 
 
 class SendIn(BaseModel):
@@ -162,12 +181,16 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             "telegram_username": user["telegram_username"],
             "bot_username": cfg.bot_username,
             "channels": channels_of(user["id"]),
+            "usage": db.usage(user["id"]),
         }
 
     def channels_of(uid: int) -> list[dict]:
         out = []
         for k in db.follows(uid):
             st = status(k) if status else {"live": False, "clips_recent": db.clips_since(k, time.time() - 12 * 3600)}
+            sid = st.pop("stream_id", None)
+            # сколько клипов этого эфира уже пришло человеку: лимит тарифа считается за стрим
+            st["my_clips_stream"] = db.received_in_stream(uid, sid) if sid else 0
             out.append({**from_key(k).public(), **st})
         return with_avatars(out)
 
@@ -292,12 +315,13 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         return channels_of(user["id"])
 
     # ---------- клипы ----------
-    def clip_dict(c, plan, rated: dict[str, int]) -> dict:
+    def clip_dict(c, plan, rated: dict[str, int], favs: set[str] = frozenset()) -> dict:
         base = f"{cfg.public_url}/clips/{c['id']}"
         src = from_key(c["channel"])
         return {"id": c["id"], "channel": src.name.lstrip("@"), "platform": src.platform,
                 "platform_title": src.title, "channel_key": c["channel"], "reason": c["reason"], "kind": c["kind"],
-                "title": c["title"], "rating": rated.get(c["id"], 0),
+                "title": c["title"], "rating": rated.get(c["id"], 0), "fav": c["id"] in favs,
+                "words": json.loads(c["words"] or "[]"),
                 "created": c["created"], "duration": variants.duration_for(c, plan.long_clips),
                 "source_duration": c["duration"],
                 "moment": variants.moment_for(c, plan.long_clips),
@@ -310,7 +334,15 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     def clips(user=Depends(current_user)):
         rated = db.my_ratings(user["id"])
         plan = db.plan_of(user) or PLANS["trial"]
-        return [clip_dict(c, plan, rated) for c in db.user_clips(user["id"])]
+        favs = db.favs(user["id"])
+        return [clip_dict(c, plan, rated, favs) for c in db.user_clips(user["id"])]
+
+    @app.post("/clips/{clip_id}/fav")
+    def fav(clip_id: str, body: FavIn, user=Depends(current_user)):
+        """❤️ Любимый клип: такие клипы не удаляются со временем и собираются в отдельный список."""
+        if not db.set_fav(clip_id, user["id"], body.on):
+            raise HTTPException(404, "Клип не найден")
+        return {"ok": True}
 
     @app.get("/clips/{clip_id}/{kind}")
     def clip_file(clip_id: str, kind: str, user=Depends(current_user)):
@@ -349,7 +381,8 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         """Можно ли смотреть эфир прямо в приложении и сколько секунд назад можно вырезать."""
         w = live(key) if live else None
         on_air = key in db.follows(user["id"]) and w is not None and w.live_edge() is not None
-        return {"live": on_air, "max_seconds": max(10, min(90, cfg.buffer_seconds - 20)),
+        plan = db.plan_of(user) or PLANS["trial"]
+        return {"live": on_air, "max_seconds": max(10, min(plan.max_seconds, cfg.buffer_seconds - 20)),
                 "playlist": f"{cfg.public_url}/live/{key}/index.m3u8?token={raw_token(request)}" if on_air else None,
                 "url": from_key(key).url}
 
@@ -387,7 +420,8 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         if now - last_cut.get(user["id"], 0) < 3:
             raise HTTPException(429, "Подожди пару секунд перед следующим клипом")
         last_cut[user["id"]] = now
-        seconds = max(5.0, min(float(body.seconds), 90.0, cfg.buffer_seconds - 20.0))
+        plan = db.plan_of(user) or PLANS["trial"]
+        seconds = max(5.0, min(float(body.seconds), float(plan.max_seconds), cfg.buffer_seconds - 20.0))
         behind = max(0.0, min(float(body.behind), cfg.buffer_seconds - seconds - 10))
         clip_id = await w.cut_now(user["id"], seconds, behind)
         c = db.clip(clip_id) if clip_id else None
@@ -401,19 +435,65 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             raise HTTPException(404, "Клип не найден")
         return c
 
+    up_dir = cfg.clips_dir / "uploads"
+    UP_KINDS = {"audio": ("m4a", 20 * 1024 * 1024), "video": ("mp4", 60 * 1024 * 1024)}
+
+    def upload_path(uid: int, upid: str | None) -> Path | None:
+        if not upid:
+            return None
+        m = re.fullmatch(r"(audio|video)_[0-9a-f]{12}", upid)
+        path = up_dir / f"u{uid}_{upid}.{UP_KINDS[m.group(1)][0] if m else 'x'}"
+        if not m or not path.exists():
+            raise HTTPException(404, "Файл не найден, загрузи его ещё раз")
+        return path
+
+    @app.post("/uploads")
+    async def upload(request: Request, kind: str = Query(...), user=Depends(current_user)):
+        """Своя музыка или своё видео для монтажа. Тело запроса: сам файл."""
+        if kind not in UP_KINDS:
+            raise HTTPException(400, "Можно загрузить только музыку или видео")
+        ext, limit = UP_KINDS[kind]
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                raise HTTPException(413, "Файл слишком большой")
+        upid = f"{kind}_{hashlib.sha1(bytes(data)).hexdigest()[:12]}"
+        up_dir.mkdir(parents=True, exist_ok=True)
+        path = up_dir / f"u{user['id']}_{upid}.{ext}"
+        path.write_bytes(bytes(data))
+        if await asyncio.to_thread(enhance.video_duration, path) <= 0:
+            path.unlink(missing_ok=True)
+            raise HTTPException(400, "Не получилось прочитать файл")
+        return {"id": upid}
+
+    async def styled(base: Path, out: Path, user, st: Style) -> Path:
+        """Музыка и видео поверх: отдельный шаг после монтажа."""
+        music, overlay = upload_path(user["id"], st.music), upload_path(user["id"], st.overlay)
+        if not music and not overlay:
+            return base
+        if not out.exists():
+            done = await asyncio.to_thread(enhance.decorate, base, out, music, st.music_volume, overlay, st.overlay_pos)
+            if done is None:
+                raise HTTPException(500, "Не получилось смонтировать клип")
+        return out
+
     async def render(c, user, start: float, end: float | None, vertical: bool, subtitles: bool,
-                     title: str | None):
+                     title: str | None, font: str = "classic", words: list | None = None):
         """Смонтированная версия куска клипа. Одинаковые настройки не монтируются второй раз."""
         plan = db.plan_of(user) or PLANS["trial"]
         full = c["duration"] or 0
         start, end = max(0.0, start), min(full, end if end is not None else full)
-        if end - start < 1:
+        if end - start < 1 or end - start > plan.max_seconds + 0.5:
             raise HTTPException(400, "Неверные границы клипа")
         if vertical and not plan.vertical:
             raise HTTPException(403, "Вертикальные клипы есть на Standard и выше")
         title = c["title"] if title is None else (title.strip()[:80] or None)
+        font = font if font in enhance.FONTS else "classic"
+        words = [list(w) for w in words] if words is not None else json.loads(c["words"] or "[]")
         h = variants.want_for(plan, c).height
-        key = json.dumps([round(start, 1), round(end, 1), vertical, subtitles, title, h], ensure_ascii=False)
+        key = json.dumps([round(start, 1), round(end, 1), vertical, subtitles, title, h, font,
+                          words if subtitles else None], ensure_ascii=False)
         eid = hashlib.sha1(key.encode()).hexdigest()[:10]
         out = cfg.clips_dir / f"{c['id']}.vE{eid}.mp4"
         if not out.exists():
@@ -421,10 +501,10 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             if not src.exists():
                 raise HTTPException(404, "Файл уже удалён с сервера, он есть в Telegram")
             if vertical:
-                words = [enhance.Word(*x) for x in json.loads(c["words"] or "[]")] if subtitles else None
+                ws = [enhance.Word(float(a), float(b), str(t)[:40]) for a, b, t in words] if subtitles else None
                 moment = c["moment"] - start if c["moment"] is not None and start <= c["moment"] <= end else None
-                done = await asyncio.to_thread(enhance.make_vertical, src, out, words, h, start, end - start,
-                                               title, moment)
+                done = await asyncio.to_thread(enhance.make_vertical, src, out, ws, h, start, end - start,
+                                               title, moment, font)
             else:
                 done = await asyncio.to_thread(enhance.make_horizontal, src, out, h, start, end - start)
             if done is None:
@@ -435,7 +515,12 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     async def edit(clip_id: str, body: EditIn, user=Depends(current_user)):
         """Быстрый монтаж: обрезка, вертикаль (вебка сверху, игра снизу), субтитры, заголовок."""
         c = my_clip(clip_id, user)
-        eid, _, dur = await render(c, user, body.start, body.end, body.vertical, body.subtitles, body.title)
+        eid, base, dur = await render(c, user, body.start, body.end, body.vertical, body.subtitles, body.title,
+                                      body.font, body.words)
+        extra = hashlib.sha1(f"{body.music}|{body.music_volume:.2f}|{body.overlay}|{body.overlay_pos}".encode()).hexdigest()[:4]
+        if body.music or body.overlay:
+            eid = (eid[:6] + extra)
+            await styled(base, cfg.clips_dir / f"{clip_id}.vE{eid}.mp4", user, body)
         return {"id": eid, "video": f"{cfg.public_url}/clips/{clip_id}/edit/{eid}", "duration": dur}
 
     hl_dir = cfg.clips_dir / "highlights"
@@ -449,15 +534,20 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         for i, part in enumerate(body.parts):
             c = my_clip(part.clip, user)
             _, path, dur = await render(c, user, part.start, part.end, body.vertical, body.subtitles,
-                                        body.title if i == 0 else "")
+                                        body.title if i == 0 else "", body.font)
             files.append(path)
             total += dur
-        hid = hashlib.sha1(f"{user['id']}|{[str(f.name) for f in files]}".encode()).hexdigest()[:12]
+        hid = hashlib.sha1(f"{user['id']}|{[str(f.name) for f in files]}|{body.transition}|{body.music}|"
+                           f"{body.music_volume:.2f}|{body.overlay}|{body.overlay_pos}".encode()).hexdigest()[:12]
         out = hl_dir / f"hl_{user['id']}_{hid}.mp4"
         if not out.exists():
             hl_dir.mkdir(parents=True, exist_ok=True)
-            if await asyncio.to_thread(enhance.concat, files, out) is None:
+            joined = hl_dir / f"hl_{user['id']}_{hid}.join.mp4" if body.music or body.overlay else out
+            if not joined.exists() and await asyncio.to_thread(enhance.concat, files, joined, body.transition) is None:
                 raise HTTPException(500, "Не получилось смонтировать клип")
+            if joined != out:
+                await styled(joined, out, user, body)
+                joined.unlink(missing_ok=True)
         return {"id": hid, "video": f"{cfg.public_url}/highlights/{hid}", "duration": round(total, 1)}
 
     def my_highlight(hid: str, user):

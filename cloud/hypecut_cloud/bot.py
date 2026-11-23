@@ -182,15 +182,9 @@ class Bot:
             self.t(
                 "Подписка HypeCut оплачивается звёздами Telegram и продлевается сама каждые 30 дней. "
                 "Отменить можно в любой момент в настройках Telegram.\n\n"
-                f"Standard: 720p, {PLANS['standard'].channels} канала, до {PLANS['standard'].clips_per_stream} клипов за стрим, "
-                "вертикальные клипы с субтитрами\n"
-                f"Pro: 1080p, {PLANS['pro'].channels} каналов, до {PLANS['pro'].clips_per_stream} клипов за стрим, первыми в очереди\n"
-                f"Max: до 2K, {PLANS['max'].channels} каналов, до {PLANS['max'].clips_per_stream} клипов за стрим, клипы длиннее",
+                + "\n".join(_plan_line(p, ru=True) for p in ("standard", "pro", "max")),
                 "HypeCut is paid with Telegram Stars and renews every 30 days. Cancel any time in Telegram settings.\n\n"
-                f"Standard: 720p, {PLANS['standard'].channels} channels, up to {PLANS['standard'].clips_per_stream} clips per stream, "
-                "vertical clips with captions\n"
-                f"Pro: 1080p, {PLANS['pro'].channels} channels, up to {PLANS['pro'].clips_per_stream} clips per stream, priority\n"
-                f"Max: up to 2K, {PLANS['max'].channels} channels, up to {PLANS['max'].clips_per_stream} clips per stream, longer clips"),
+                + "\n".join(_plan_line(p, ru=False) for p in ("standard", "pro", "max"))),
             buttons)
 
     @staticmethod
@@ -259,3 +253,20 @@ class Bot:
 
 
 __all__ = ["Bot", "PLANS"]
+
+
+def _minutes(sec: int, ru: bool) -> str:
+    m = sec / 60
+    n = f"{m:g}".replace(".", "," if ru else ".")
+    return f"{n} мин" if ru else f"{n} min"
+
+
+def _plan_line(plan_id: str, ru: bool) -> str:
+    """Одна строка тарифа для бота: качество, каналы, клипы, длина клипа."""
+    p = PLANS[plan_id]
+    q = {720: "720p", 1080: "1080p", 1440: "2K (1440p)"}.get(p.height, f"{p.height}p")
+    if ru:
+        return (f"{p.title} · {p.price_usd:g} $: {q}, {p.channels} канал{'а' if p.channels < 5 else 'ов'}, "
+                f"до {p.clips_per_stream} клипов за стрим, клип до {_minutes(p.max_seconds, True)}")
+    return (f"{p.title} · ${p.price_usd:g}: {q}, {p.channels} channels, up to {p.clips_per_stream} clips per stream, "
+            f"clips up to {_minutes(p.max_seconds, False)}")

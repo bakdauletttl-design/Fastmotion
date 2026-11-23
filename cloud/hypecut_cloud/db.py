@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS deliveries (
     stream_id TEXT NOT NULL,
     created REAL NOT NULL,
     sent INTEGER NOT NULL DEFAULT 0,
+    fav INTEGER DEFAULT 0,           -- ❤️ человек отметил клип как любимый
     PRIMARY KEY (clip_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS payments (
@@ -134,11 +135,12 @@ class DB:
     def _migrate(self) -> None:
         """Добавляет новые колонки в старую базу, чтобы обновление сервера не теряло данные."""
         for table, cols in (("clips", ("title", "transcript", "words", "height", "trim_start", "trim_end")),
-                            ("users", ("lang",))):
+                            ("users", ("lang",)), ("deliveries", ("fav",))):
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col in cols:
                 if col not in have:
-                    kind = "REAL DEFAULT 0" if col.startswith("trim") else "INTEGER" if col == "height" else "TEXT"
+                    kind = "REAL DEFAULT 0" if col.startswith("trim") else "INTEGER" if col == "height" \
+                        else "INTEGER DEFAULT 0" if col == "fav" else "TEXT"
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
 
     def q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
@@ -205,6 +207,15 @@ class DB:
             self.x("INSERT OR REPLACE INTO ratings VALUES (?,?,?,?,?,?)",
                    (clip_id, uid, 1 if value > 0 else -1, clip["channel"], clip["kind"], time.time()))
         return True
+
+    def set_fav(self, clip_id: str, uid: int, on: bool) -> bool:
+        if not self.has_clip(uid, clip_id):
+            return False
+        self.x("UPDATE deliveries SET fav=? WHERE clip_id=? AND user_id=?", (int(on), clip_id, uid))
+        return True
+
+    def favs(self, uid: int) -> set[str]:
+        return {r["clip_id"] for r in self.q("SELECT clip_id FROM deliveries WHERE user_id=? AND fav=1", (uid,))}
 
     def my_ratings(self, uid: int) -> dict[str, int]:
         return {r["clip_id"]: r["value"] for r in self.q("SELECT clip_id, value FROM ratings WHERE user_id=?", (uid,))}
@@ -341,12 +352,23 @@ class DB:
                         (uid, stream_id))["n"]
 
     def add_delivery(self, clip_id: str, uid: int, stream_id: str, sent: bool) -> None:
-        self.x("INSERT OR REPLACE INTO deliveries VALUES (?,?,?,?,?)",
+        self.x("INSERT OR REPLACE INTO deliveries (clip_id, user_id, stream_id, created, sent) VALUES (?,?,?,?,?)",
                (clip_id, uid, stream_id, time.time(), int(sent)))
 
     def user_clips(self, uid: int, limit: int = 100) -> list[sqlite3.Row]:
         return self.q("SELECT c.* FROM clips c JOIN deliveries d ON d.clip_id=c.id "
                       "WHERE d.user_id=? ORDER BY c.created DESC LIMIT ?", (uid, limit))
+
+    def usage(self, uid: int, now: float | None = None) -> dict:
+        """Сколько человек уже получил: для экрана «Профиль»."""
+        now = now or time.time()
+        one = lambda sql, *a: self.one(sql, (uid, *a))["n"]
+        base = "SELECT COUNT(*) n FROM deliveries d JOIN clips c ON c.id=d.clip_id WHERE d.user_id=?"
+        return {"channels": len(self.follows(uid)),
+                "clips_today": one(base + " AND d.created>=?", now - 86400),
+                "clips_month": one(base + " AND d.created>=?", now - 30 * 86400),
+                "my_clips_month": one(base + " AND c.kind='user' AND d.created>=?", now - 30 * 86400),
+                "clips_total": one(base)}
 
     def has_clip(self, uid: int, clip_id: str) -> bool:
         return self.one("SELECT 1 FROM deliveries WHERE user_id=? AND clip_id=?", (uid, clip_id)) is not None
@@ -355,7 +377,9 @@ class DB:
         return self.one("SELECT COUNT(*) n FROM clips WHERE channel=? AND created>=?", (channel, since))["n"]
 
     def old_clips(self, before: float) -> list[sqlite3.Row]:
-        return self.q("SELECT * FROM clips WHERE created<?", (before,))
+        # любимые (❤️) клипы не удаляем
+        return self.q("SELECT * FROM clips WHERE created<? AND id NOT IN "
+                      "(SELECT clip_id FROM deliveries WHERE fav=1)", (before,))
 
     def delete_clip(self, clip_id: str) -> None:
         self.x("DELETE FROM clips WHERE id=?", (clip_id,))
