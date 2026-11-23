@@ -1,0 +1,18 @@
+services:
+  hypecut:
+    build:
+      context: ..
+      dockerfile: cloud/Dockerfile
+    env_file: .env
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+  # HTTPS для приложения: Caddy сам получает сертификат для вашего домена
+  caddy:
+    image: caddy:2
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to hypecut:8080
+    ports: ["80:80", "443:443"]
+    volumes: [caddy:/data]
+    restart: unless-stopped
+volumes:
+  caddy:
