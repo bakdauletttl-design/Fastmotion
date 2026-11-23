@@ -81,6 +81,15 @@ def chunks(words: list[Word], size: int = 3) -> list[list[Word]]:
 HOOK_ASS = "&H0000E5FF"  # жёлтый, как у клиперов: заголовок-крючок в первые секунды
 
 
+def ass_color(hex_rgb: str | None, default: str) -> str:
+    """#RRGGBB из приложения -> цвет ASS (&H00BBGGRR). Неверный цвет: оставляем обычный."""
+    m = re.fullmatch(r"#?([0-9a-fA-F]{6})", hex_rgb or "")
+    if not m:
+        return default
+    h = m.group(1).upper()
+    return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}"
+
+
 FONTS_DIR = Path(__file__).parent / "fonts"
 # шрифты для субтитров и заголовка (все с кириллицей); ширина: насколько уменьшить, чтобы влезло
 FONTS: dict[str, tuple[str, float]] = {
@@ -94,7 +103,7 @@ FONTS: dict[str, tuple[str, float]] = {
 
 def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: int | None = None,
               hook: str | None = None, hook_y: int | None = None, hook_seconds: float = 3.0,
-              font: str = "classic") -> Path | None:
+              font: str = "classic", colors: dict | None = None) -> Path | None:
     """Крупные субтитры в стиле TikTok: белые слова, текущее слово зелёное.
 
     hook: заголовок клипа крупными жёлтыми буквами в первые секунды, чтобы зритель не пролистал.
@@ -103,6 +112,10 @@ def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: 
         return None
     y = y if y is not None else int(height * 0.62)
     face, k = FONTS.get(font, FONTS["classic"])
+    colors = colors or {}
+    text_c = ass_color(colors.get("text"), "&H00FFFFFF")      # обычные слова
+    word_c = ass_color(colors.get("word"), ACCENT_ASS)        # слово, которое звучит сейчас
+    hook_c = ass_color(colors.get("title"), HOOK_ASS)         # заголовок-крючок
     size = int(width * 0.08 * k)
     lines = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}",
@@ -110,9 +123,9 @@ def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: 
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Cap,{face},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,"
+        f"Style: Cap,{face},{size},{text_c},{text_c},&H00000000,&H64000000,"
         "1,0,0,0,100,100,0,0,1,6,2,5,60,60,0,1",
-        f"Style: Hook,{face},{int(width * 0.082 * k)},{HOOK_ASS},{HOOK_ASS},&H00000000,&H64000000,"
+        f"Style: Hook,{face},{int(width * 0.082 * k)},{hook_c},{hook_c},&H00000000,&H64000000,"
         f"1,0,0,0,100,100,0,0,1,{max(4, width // 120)},3,5,{int(width * 0.04)},{int(width * 0.04)},0,1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
@@ -127,8 +140,8 @@ def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: 
             continue  # пока висит заголовок, субтитры не мешают
         for i, w in enumerate(group):
             end = group[i + 1].start if i + 1 < len(group) else w.end + 0.25
-            parts = [(f"{{\\c{ACCENT_ASS}}}" if j == i else "") + _clean(x.text).upper() +
-                     ("{\\c&H00FFFFFF}" if j == i else "") for j, x in enumerate(group)]
+            parts = [(f"{{\\c{word_c}}}" if j == i else "") + _clean(x.text).upper() +
+                     (f"{{\\c{text_c}}}" if j == i else "") for j, x in enumerate(group)]
             lines.append(f"Dialogue: 0,{_ts(w.start)},{_ts(end)},Cap,,0,0,0,,"
                          f"{{\\pos({width // 2},{y})}}" + " ".join(parts))
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -341,7 +354,8 @@ def punch_in(vw: int, vh: int, at: float | None, zoom: float = 0.12, length: flo
 
 def make_vertical(src: Path, out: Path, words: list[Word] | None = None, height: int = 1080,
                   ss: float = 0.0, t: float | None = None, title: str | None = None,
-                  moment: float | None = None, font: str = "classic", shift_words: bool = True) -> Path | None:
+                  moment: float | None = None, font: str = "classic", shift_words: bool = True,
+                  colors: dict | None = None) -> Path | None:
     """Вертикальная 9:16 версия в стиле клиперов.
 
     Вебка сверху и игра снизу (или кадр по лицу), заголовок-крючок в начале, субтитры по словам,
@@ -357,7 +371,8 @@ def make_vertical(src: Path, out: Path, words: list[Word] | None = None, height:
     d = ss if shift_words else 0.0  # слова из редактора уже в секундах готового клипа
     shifted = [Word(w.start - d, w.end - d, w.text) for w in (words or [])
                if w.end > d and (t is None or w.start < d + t)]
-    ass = write_ass(shifted, out.with_suffix(".ass"), vw, vh, y=sub_y, hook=title, hook_y=hook_y, font=font)
+    ass = write_ass(shifted, out.with_suffix(".ass"), vw, vh, y=sub_y, hook=title, hook_y=hook_y, font=font,
+                    colors=colors)
     graph += f";[base]ass='{_ass_path(ass)}':fontsdir='{_ass_path(FONTS_DIR)}'[v]" if ass else ";[base]null[v]"
     cut = (["-ss", f"{ss:.2f}"] if ss else []) + (["-t", f"{t:.2f}"] if t else [])
     p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *cut, "-i", str(src),

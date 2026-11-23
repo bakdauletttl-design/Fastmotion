@@ -554,3 +554,13 @@ def test_watch_live_cut_edit_and_send(env, tmp_path):
     usage = client.get("/me", headers=h).json()["usage"]
     assert usage["my_clips_month"] == 1 and usage["channels"] == 1
     assert db.old_clips(time.time() + 10) == []  # любимый клип не удаляется
+
+
+def test_caption_colors_and_fonts(tmp_path):
+    from hypecut_cloud import enhance
+    assert enhance.ass_color("#FF8800", "x") == "&H000088FF" and enhance.ass_color("bad", "x") == "x"
+    words = [enhance.Word(3.5, 4.0, "привет"), enhance.Word(4.0, 4.6, "мир")]
+    ass = enhance.write_ass(words, tmp_path / "a.ass", 720, 1280, hook="Заголовок", font="lobster",
+                            colors={"text": "#00FF00", "word": "#FF0000", "title": "#0000FF"})
+    text = ass.read_text(encoding="utf-8")
+    assert "Style: Cap,Lobster" in text and "&H0000FF00" in text and "&H000000FF" in text and "&H00FF0000" in text

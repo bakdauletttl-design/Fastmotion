@@ -7,7 +7,7 @@ import { reel, useReel } from "../highlights";
 import { L } from "../i18n";
 import { Button, c, Chips, P, s } from "../ui";
 import { Result } from "./Editor";
-import StylePanel, { TRANSITIONS } from "./StylePanel";
+import StylePanel, { transitions } from "./StylePanel";
 
 export default function Highlights({ me, onClose }: { me: Me | null; onClose: () => void }) {
   const items = useReel();
@@ -80,7 +80,7 @@ export default function Highlights({ me, onClose }: { me: Me | null; onClose: ()
           )}
           <View style={{ gap: 8 }}>
             <P style={{ fontWeight: "700" }}>{L("Переход между моментами", "Transition between moments")}</P>
-            <Chips items={TRANSITIONS} value={transition} onChange={setTransition} />
+            <Chips items={transitions()} value={transition} onChange={setTransition} />
           </View>
           <StylePanel value={style} onChange={setStyle} vertical={vertical} />
           <Button title={L("Склеить ролик", "Build video")} busy={busy} disabled={!items.length} onPress={build} />

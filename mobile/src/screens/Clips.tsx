@@ -8,18 +8,19 @@ import { saveToGallery as download } from "../save";
 import Editor from "./Editor";
 import Highlights from "./Highlights";
 import { Button, c, Chips, H1, P, s, Tag } from "../ui";
-import { L, LOCALE } from "../i18n";
+import { L, locale } from "../i18n";
 
-const KIND: Record<string, string> = {
+const kinds = (): Record<string, string> => ({
   chat: L("ЧАТ", "CHAT"),
   audio: L("ЗВУК", "AUDIO"),
   manual: L("МОМЕНТ", "MOMENT"),
   edit: L("МОНТАЖ", "EDIT"),
   viewers: L("ЗРИТЕЛИ", "VIEWERS"),
   user: L("МОЙ КЛИП", "MY CLIP"),
-};
+});
 
 function shortReason(clip: Clip): string {
+  const KIND = kinds();
   const m = clip.reason.match(/x(\d+(?:\.\d)?)/);
   return m ? `${KIND[clip.kind] ?? KIND.manual} x${Math.round(Number(m[1]))}` : KIND[clip.kind] ?? KIND.manual;
 }
@@ -214,7 +215,7 @@ export default function Clips({ me }: { me: Me | null }) {
             <P style={{ fontWeight: "700", marginTop: 8 }} numberOfLines={2}>{item.title ?? item.channel}</P>
             <P dim style={{ fontSize: 13 }} numberOfLines={1}>
               {item.title ? `${item.channel} · ` : `${item.platform_title} · `}
-              {new Date(item.created * 1000).toLocaleString(LOCALE, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+              {new Date(item.created * 1000).toLocaleString(locale(), { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
             </P>
           </Pressable>
         )}

@@ -237,7 +237,8 @@ export default function Editor({ clip, me, onClose }: { clip: Clip; me: Me | nul
                    onChange={change} onSeek={(t) => { player.currentTime = t; player.play(); }} />
           <P dim style={{ fontSize: 12 }}>
             {L(`Тяни зелёные ручки, чтобы обрезать (на твоём тарифе до ${maxLen} сек). Жёлтая черта: самый яркий момент.`,
-               `Drag the green handles to trim (up to ${maxLen} s on your plan). The yellow line is the peak moment.`)}
+               `Drag the green handles to trim (up to ${maxLen} s on your plan). The yellow line is the peak moment.`,
+               `Қию үшін жасыл тұтқаларды тарт (тарифіңде ${maxLen} сек дейін). Сары сызық: ең жарқын сәт.`)}
           </P>
           <Chips
             items={[{ id: "v", title: L("9:16 вебка + игра", "9:16 cam + game") }, { id: "h", title: "16:9" }]}

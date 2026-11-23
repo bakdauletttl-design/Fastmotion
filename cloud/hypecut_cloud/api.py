@@ -90,6 +90,12 @@ class Style(BaseModel):
     music_volume: float = 0.35
     overlay: str | None = None     # id загруженного видео, которое встанет поверх клипа
     overlay_pos: str = "top"       # top: крупно сверху, corner: маленьким окном в углу
+    text_color: str | None = None  # цвет субтитров #RRGGBB
+    word_color: str | None = None  # цвет слова, которое звучит сейчас
+    title_color: str | None = None # цвет заголовка
+
+    def colors(self) -> dict:
+        return {"text": self.text_color, "word": self.word_color, "title": self.title_color}
 
 
 class EditIn(Style):
@@ -479,7 +485,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         return out
 
     async def render(c, user, start: float, end: float | None, vertical: bool, subtitles: bool,
-                     title: str | None, font: str = "classic", words: list | None = None):
+                     title: str | None, font: str = "classic", words: list | None = None, colors: dict | None = None):
         """Смонтированная версия куска клипа. Одинаковые настройки не монтируются второй раз."""
         plan = db.plan_of(user) or PLANS["trial"]
         full = c["duration"] or 0
@@ -493,7 +499,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         words = [list(w) for w in words] if words is not None else json.loads(c["words"] or "[]")
         h = variants.want_for(plan, c).height
         key = json.dumps([round(start, 1), round(end, 1), vertical, subtitles, title, h, font,
-                          words if subtitles else None], ensure_ascii=False)
+                          words if subtitles else None, colors], ensure_ascii=False)
         eid = hashlib.sha1(key.encode()).hexdigest()[:10]
         out = cfg.clips_dir / f"{c['id']}.vE{eid}.mp4"
         if not out.exists():
@@ -504,7 +510,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
                 ws = [enhance.Word(float(a), float(b), str(t)[:40]) for a, b, t in words] if subtitles else None
                 moment = c["moment"] - start if c["moment"] is not None and start <= c["moment"] <= end else None
                 done = await asyncio.to_thread(enhance.make_vertical, src, out, ws, h, start, end - start,
-                                               title, moment, font)
+                                               title, moment, font, True, colors)
             else:
                 done = await asyncio.to_thread(enhance.make_horizontal, src, out, h, start, end - start)
             if done is None:
@@ -516,7 +522,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         """Быстрый монтаж: обрезка, вертикаль (вебка сверху, игра снизу), субтитры, заголовок."""
         c = my_clip(clip_id, user)
         eid, base, dur = await render(c, user, body.start, body.end, body.vertical, body.subtitles, body.title,
-                                      body.font, body.words)
+                                      body.font, body.words, body.colors())
         extra = hashlib.sha1(f"{body.music}|{body.music_volume:.2f}|{body.overlay}|{body.overlay_pos}".encode()).hexdigest()[:4]
         if body.music or body.overlay:
             eid = (eid[:6] + extra)
@@ -534,7 +540,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         for i, part in enumerate(body.parts):
             c = my_clip(part.clip, user)
             _, path, dur = await render(c, user, part.start, part.end, body.vertical, body.subtitles,
-                                        body.title if i == 0 else "", body.font)
+                                        body.title if i == 0 else "", body.font, None, body.colors())
             files.append(path)
             total += dur
         hid = hashlib.sha1(f"{user['id']}|{[str(f.name) for f in files]}|{body.transition}|{body.music}|"

@@ -2,7 +2,7 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { API_URL } from "./config";
 import { demoCall } from "./demo";
-import { L, LANG } from "./i18n";
+import { getLang, L } from "./i18n";
 
 export type Plan = {
   id: "trial" | "standard" | "pro" | "max";
@@ -120,7 +120,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     method,
     headers: {
       "Content-Type": "application/json",
-      "Accept-Language": LANG,
+      "Accept-Language": getLang(),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -134,7 +134,10 @@ type Session = { token: string; user: Me };
 
 export type LiveInfo = { live: boolean; max_seconds: number; playlist: string | null; url: string };
 export type Rendered = { id: string; video: string; duration: number };
-export type Style = { font?: string; music?: string | null; music_volume?: number; overlay?: string | null; overlay_pos?: "top" | "corner" };
+export type Style = {
+  font?: string; music?: string | null; music_volume?: number; overlay?: string | null; overlay_pos?: "top" | "corner";
+  text_color?: string | null; word_color?: string | null; title_color?: string | null; // #RRGGBB
+};
 export type EditOptions = Style & { start: number; end: number; vertical: boolean; subtitles: boolean; title?: string | null; words?: Word[] | null };
 export type Part = { clip: string; start: number; end: number };
 
@@ -172,7 +175,7 @@ export const api = {
     const blob = await (await fetch(uri)).blob();
     const res = await fetch(`${API_URL}/uploads?kind=${kind}`, {
       method: "POST", body: blob,
-      headers: { "Accept-Language": LANG, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { "Accept-Language": getLang(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new ApiError(res.status, data.detail ?? L("Сервер не ответил", "Server did not respond"));

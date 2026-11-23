@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Modal, Pressable, TextInput, View } from "react-native";
 import { api, Channel, Found, Me, PlatformId } from "../api";
 import Live from "./Live";
-import { Button, c, Chips, H1, P, PLATFORMS, platformColor, s } from "../ui";
+import { Button, c, Chips, H1, P, platforms, platformColor, s } from "../ui";
 import { L } from "../i18n";
 
 function Avatar({ name, platform, uri, size = 40 }: { name: string; platform: PlatformId; uri?: string | null; size?: number }) {
@@ -25,7 +25,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
   const [watching, setWatching] = useState<Channel | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const limit = me.plan?.channels ?? 0;
-  const hint = PLATFORMS.find((p) => p.id === platform)?.hint ?? "";
+  const hint = platforms().find((p) => p.id === platform)?.hint ?? "";
   const following = new Set(me.channels.map((x) => x.key));
 
   useEffect(() => {
@@ -102,7 +102,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
                 "Any streamer from Twitch, YouTube, Kick, VK Video or TikTok. While they are live, HypeCut watches for you.",
               )}
             </P>
-            <Chips items={PLATFORMS.map((p) => ({ id: p.id, title: p.title }))} value={platform} onChange={setPlatform} />
+            <Chips items={platforms().map((p) => ({ id: p.id, title: p.title }))} value={platform} onChange={setPlatform} />
             <View style={{ flexDirection: "row", gap: 10 }}>
               <TextInput
                 style={[s.input, { flex: 1, minWidth: 0, borderRadius: 999 }]}
@@ -156,7 +156,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
                 <P style={{ fontWeight: "700" }}>{L("Нужно больше каналов?", "Need more channels?")}</P>
                 <P dim style={{ fontSize: 13 }}>{me.plan?.id === "pro"
                   ? L("На Max до 10 стримеров, качество до 2K и клипы длиннее", "Max: up to 10 streamers, up to 2K and longer clips")
-                  : L("На Pro до 6 стримеров и клипы в 1080p", "Pro: up to 6 streamers and 1080p clips")}</P>
+                  : L("На Pro до 5 стримеров и клипы в 1080p", "Pro: up to 5 streamers and 1080p clips")}</P>
               </Pressable>
             )}
             {!full && suggestions.length > 0 && (

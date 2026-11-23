@@ -1,8 +1,9 @@
 import React from "react";
-import { Alert, ScrollView, View } from "react-native";
+import { Alert, Pressable, ScrollView, View } from "react-native";
+import { getSettings, saveSettings, Settings } from "../settings";
 import { api, Me, setToken } from "../api";
-import { Button, c, H1, P, s, Tag } from "../ui";
-import { L, LOCALE } from "../i18n";
+import { Button, c, Chips, H1, P, s, Tag, THEMES, ThemeId } from "../ui";
+import { L, locale } from "../i18n";
 
 // полоска «потрачено из лимита»
 function Meter({ label, used, limit }: { label: string; used: number; limit: number | null }) {
@@ -22,9 +23,48 @@ function Meter({ label, used, limit }: { label: string; used: number; limit: num
   );
 }
 
-export default function Account({ me, onLogout, onTelegram, onPlans }:
-  { me: Me; onLogout: () => void; onTelegram: () => void; onPlans: () => void }) {
-  const until = me.plan_until ? new Date(me.plan_until * 1000).toLocaleDateString(LOCALE) : "—";
+const themeNames = (): [ThemeId, string][] => [
+  ["emerald", L("Изумруд", "Emerald")], ["light", L("Светлая", "Light")], ["neon", L("Неон", "Neon")], ["sunset", L("Закат", "Sunset")],
+];
+
+// Тема и язык: меняются сразу, без перезапуска
+function Look({ onLook }: { onLook: () => void }) {
+  const cur = getSettings();
+  async function set(patch: Partial<Settings>) {
+    await saveSettings(patch);
+    onLook();
+  }
+  return (
+    <View style={[s.card, { gap: 14 }]}>
+      <P style={{ fontWeight: "700" }}>{L("Оформление", "Appearance")}</P>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        {themeNames().map(([id, name]) => {
+          const t = THEMES[id];
+          const on = cur.theme === id;
+          return (
+            <Pressable key={id} onPress={() => set({ theme: id })} style={{ flex: 1, alignItems: "center", gap: 6 }}>
+              <View style={{ width: "100%", aspectRatio: 0.8, borderRadius: 14, backgroundColor: t.bg, padding: 8, gap: 5,
+                             borderWidth: 2, borderColor: on ? c.accent : c.line, justifyContent: "flex-end" }}>
+                <View style={{ height: 8, width: "70%", borderRadius: 4, backgroundColor: t.fg, opacity: 0.85 }} />
+                <View style={{ height: 6, width: "50%", borderRadius: 3, backgroundColor: t.dim }} />
+                <View style={{ height: 14, borderRadius: 7, backgroundColor: t.accent, marginTop: 4 }} />
+              </View>
+              <P style={{ fontSize: 12, fontWeight: on ? "700" : "500", color: on ? c.fg : c.dim }}>{name}</P>
+            </Pressable>
+          );
+        })}
+      </View>
+      <P style={{ fontWeight: "700" }}>{L("Язык", "Language")}</P>
+      <Chips items={[{ id: "auto", title: L("Как в телефоне", "Phone language") }, { id: "kk", title: "Қазақша" },
+                     { id: "ru", title: "Русский" }, { id: "en", title: "English" }]}
+             value={cur.lang} onChange={(lang) => set({ lang: lang as Settings["lang"] })} />
+    </View>
+  );
+}
+
+export default function Account({ me, onLogout, onTelegram, onPlans, onLook }:
+  { me: Me; onLogout: () => void; onTelegram: () => void; onPlans: () => void; onLook: () => void }) {
+  const until = me.plan_until ? new Date(me.plan_until * 1000).toLocaleDateString(locale()) : "—";
   const days = me.plan_until ? Math.max(0, Math.ceil((me.plan_until - Date.now() / 1000) / 86400)) : 0;
   const u = me.usage;
   const live = me.channels.filter((x) => x.live);
@@ -86,6 +126,7 @@ export default function Account({ me, onLogout, onTelegram, onPlans }:
         )}
         <Button title={me.plan?.id === "max" ? L("Тарифы", "Plans") : L("Тарифы и повышение", "Plans and upgrade")} onPress={onPlans} />
       </View>
+      <Look onLook={onLook} />
       <View style={[s.card, { gap: 14 }]}>
         {rows.map(([k, v]) => (
           <View key={k} style={s.row}>

@@ -26,9 +26,9 @@ const mins = (sec: number) =>
 // Что даёт тариф: собирается из цифр сервера, чтобы приложение и бот не расходились
 function features(p: Plan): string[] {
   const ch = p.channels === 1 ? L("1 канал", "1 channel")
-    : p.channels < 5 ? L(`${p.channels} канала`, `${p.channels} channels`) : L(`${p.channels} каналов`, `${p.channels} channels`);
-  const out = [q(p.height), ch, L(`до ${p.clips_per_stream} клипов за стрим`, `up to ${p.clips_per_stream} clips per stream`),
-               L(`клип до ${mins(p.max_seconds)}`, `clips up to ${mins(p.max_seconds)}`)];
+    : p.channels < 5 ? L(`${p.channels} канала`, `${p.channels} channels`, `${p.channels} арна`) : L(`${p.channels} каналов`, `${p.channels} channels`, `${p.channels} арна`);
+  const out = [q(p.height), ch, L(`до ${p.clips_per_stream} клипов за стрим`, `up to ${p.clips_per_stream} clips per stream`, `бір стримге ${p.clips_per_stream} клипке дейін`),
+               L(`клип до ${mins(p.max_seconds)}`, `clips up to ${mins(p.max_seconds)}`, `клип ұзындығы ${mins(p.max_seconds)} дейін`)];
   if (p.vertical) out.push(L("вертикаль 9:16 с субтитрами, монтаж и хайлайты", "9:16 with captions, editor and highlights"));
   if (p.priority) out.push(L("клипы режутся в первую очередь", "priority processing"));
   if (p.id === "trial") out.push(L("3 дня бесплатно, клипы в Telegram", "3 days free, clips in Telegram"));

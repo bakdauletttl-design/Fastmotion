@@ -64,7 +64,8 @@
         }
       ],
       "expo-localization",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-font"
     ],
     "scheme": "hypecut",
     "backgroundColor": "#07080A",
