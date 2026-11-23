@@ -8,6 +8,7 @@ import Account from "./src/screens/Account";
 import Channels from "./src/screens/Channels";
 import Clips from "./src/screens/Clips";
 import Login from "./src/screens/Login";
+import Montage from "./src/screens/Montage";
 import Plans from "./src/screens/Plans";
 import Telegram from "./src/screens/Telegram";
 import { SENTRY_DSN } from "./src/config";
@@ -16,11 +17,12 @@ import { c } from "./src/ui";
 if (SENTRY_DSN) Sentry.init({ dsn: SENTRY_DSN, tracesSampleRate: 0.1, sendDefaultPii: false });
 import { L } from "./src/i18n";
 
-type Tab = "clips" | "channels" | "plans" | "account";
+type Tab = "clips" | "channels" | "montage" | "account" | "plans";
+// тарифы открываются из профиля, отдельной вкладки у них нет
 const TABS: [Tab, string][] = [
   ["clips", L("Клипы", "Clips")],
   ["channels", L("Каналы", "Channels")],
-  ["plans", L("Тарифы", "Plans")],
+  ["montage", L("Монтаж", "Editor")],
   ["account", L("Профиль", "Profile")],
 ];
 
@@ -79,8 +81,10 @@ function App() {
         <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 24 }}>
           {tab === "clips" && <Clips me={me} />}
           {tab === "channels" && <Channels me={me} onChange={refresh} onUpgrade={() => setTab("plans")} />}
-          {tab === "plans" && <Plans me={me} onChange={refresh} />}
-          {tab === "account" && <Account me={me} onLogout={() => setMe(null)} onTelegram={() => setLinking(true)} />}
+          {tab === "montage" && <Montage me={me} />}
+          {tab === "plans" && <Plans me={me} onChange={refresh} onBack={() => setTab("account")} />}
+          {tab === "account" && <Account me={me} onLogout={() => setMe(null)} onTelegram={() => setLinking(true)}
+                                         onPlans={() => setTab("plans")} />}
         </View>
         <View style={{ flexDirection: "row", margin: 16, padding: 6, borderRadius: 999,
                        backgroundColor: c.card, borderWidth: 1, borderColor: c.line }}>
@@ -89,9 +93,9 @@ function App() {
               key={id}
               onPress={() => { setTab(id); refresh(); }}
               style={{ flex: 1, height: 44, borderRadius: 999, alignItems: "center", justifyContent: "center",
-                       backgroundColor: tab === id ? c.accent : "transparent" }}
+                       backgroundColor: tab === id || (tab === "plans" && id === "account") ? c.accent : "transparent" }}
             >
-              <Text style={{ color: tab === id ? c.onAccent : c.dim, fontWeight: "700", fontSize: 13 }}>{title}</Text>
+              <Text style={{ color: tab === id || (tab === "plans" && id === "account") ? c.onAccent : c.dim, fontWeight: "700", fontSize: 13 }}>{title}</Text>
             </Pressable>
           ))}
         </View>

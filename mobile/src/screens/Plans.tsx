@@ -19,31 +19,23 @@ function setupPurchases(userId: number): boolean {
   return true;
 }
 
-const FEATURES: Record<string, string[]> = {
-  trial: [L("1 канал", "1 channel"), L("до 5 клипов за стрим", "up to 5 clips per stream"), "720p", L("клипы в Telegram", "clips in Telegram")],
-  standard: [
-    "720p",
-    L("3 канала", "3 channels"),
-    L("до 20 клипов за стрим", "up to 20 clips per stream"),
-    L("вертикальные клипы с субтитрами для TikTok, Shorts, Reels", "vertical clips with captions for TikTok, Shorts, Reels"),
-  ],
-  pro: [
-    "1080p",
-    L("6 каналов", "6 channels"),
-    L("до 100 клипов за стрим", "up to 100 clips per stream"),
-    L("всё из Standard", "everything in Standard"),
-    L("клипы режутся в первую очередь", "priority processing"),
-  ],
-  max: [
-    L("до 2K (1440p), если стример даёт такое качество", "up to 2K (1440p) when the stream has it"),
-    L("10 каналов", "10 channels"),
-    L("до 200 клипов за стрим", "up to 200 clips per stream"),
-    L("клипы длиннее: +15 секунд", "longer clips: +15 seconds"),
-    L("всё из Pro", "everything in Pro"),
-  ],
-};
+const q = (h: number) => (h >= 1440 ? L("2K (1440p), если стример даёт такое качество", "2K (1440p) when the stream has it") : `${h}p`);
+const mins = (sec: number) =>
+  sec < 60 ? `${sec} ${L("сек", "s")}` : `${String(sec / 60).replace(".", L(",", "."))} ${L("мин", "min")}`;
 
-export default function Plans({ me, onChange }: { me: Me; onChange: () => void }) {
+// Что даёт тариф: собирается из цифр сервера, чтобы приложение и бот не расходились
+function features(p: Plan): string[] {
+  const ch = p.channels === 1 ? L("1 канал", "1 channel")
+    : p.channels < 5 ? L(`${p.channels} канала`, `${p.channels} channels`) : L(`${p.channels} каналов`, `${p.channels} channels`);
+  const out = [q(p.height), ch, L(`до ${p.clips_per_stream} клипов за стрим`, `up to ${p.clips_per_stream} clips per stream`),
+               L(`клип до ${mins(p.max_seconds)}`, `clips up to ${mins(p.max_seconds)}`)];
+  if (p.vertical) out.push(L("вертикаль 9:16 с субтитрами, монтаж и хайлайты", "9:16 with captions, editor and highlights"));
+  if (p.priority) out.push(L("клипы режутся в первую очередь", "priority processing"));
+  if (p.id === "trial") out.push(L("3 дня бесплатно, клипы в Telegram", "3 days free, clips in Telegram"));
+  return out;
+}
+
+export default function Plans({ me, onChange, onBack }: { me: Me; onChange: () => void; onBack?: () => void }) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [packages, setPackages] = useState<Record<string, PurchasesPackage>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -93,11 +85,14 @@ export default function Plans({ me, onChange }: { me: Me; onChange: () => void }
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 32, gap: 14 }}>
-      <H1>{L("Тарифы", "Plans")}</H1>
+      <View style={s.row}>
+        <H1>{L("Тарифы", "Plans")}</H1>
+        {onBack && <Button title={L("Назад", "Back")} kind="text" onPress={onBack} />}
+      </View>
       {plans.map((p) => {
         const current = me.plan?.id === p.id;
         const best = p.id === "pro";
-        const price = packages[p.id]?.product.priceString ?? (p.price_usd ? `$${p.price_usd}` : L("Бесплатно", "Free"));
+        const price = packages[p.id]?.product.priceString ?? (p.price_usd ? `$${Math.round(p.price_usd)}` : L("Бесплатно", "Free"));
         return (
           <View key={p.id} style={[s.card, best && { borderColor: c.accent }]}>
             <View style={s.row}>
@@ -109,7 +104,7 @@ export default function Plans({ me, onChange }: { me: Me; onChange: () => void }
               {p.price_usd ? <P dim> / {L("месяц", "month")}</P> : null}
             </P>
             <View style={{ marginTop: 10, gap: 6 }}>
-              {(FEATURES[p.id] ?? []).map((f) => (
+              {features(p).map((f) => (
                 <View key={f} style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
                   <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.accent }} />
                   <P dim>{f}</P>

@@ -30,6 +30,14 @@ function Player({ clip, onClose, onEdit }: { clip: Clip; onClose: () => void; on
   const [vertical, setVertical] = useState(!!clip.vertical);
   const [saving, setSaving] = useState(false);
   const [rating, setRating] = useState(clip.rating ?? 0);
+  const [fav, setFav] = useState(!!clip.fav);
+
+  function toggleFav() {
+    const next = !fav;
+    setFav(next);
+    clip.fav = next;
+    api.fav(clip.id, next).catch(() => null);
+  }
 
   // 👍/👎 помогает нарезке понять, какие моменты людям нравятся
   function rate(v: number) {
@@ -84,6 +92,11 @@ function Player({ clip, onClose, onEdit }: { clip: Clip; onClose: () => void; on
           onChange={(v) => setVertical(v === "v")}
         />
         <View style={{ flex: 1 }} />
+        <Pressable onPress={toggleFav}
+                   style={{ width: 40, height: 34, borderRadius: 999, alignItems: "center", justifyContent: "center",
+                            backgroundColor: fav ? "rgba(255,90,90,0.15)" : c.card, borderWidth: 1, borderColor: fav ? c.danger : c.line }}>
+          <P>{fav ? "❤️" : "🤍"}</P>
+        </Pressable>
         {[1, -1].map((v) => (
           <Pressable key={v} onPress={() => rate(v)}
                      style={{ width: 40, height: 34, borderRadius: 999, alignItems: "center", justifyContent: "center",
@@ -134,9 +147,15 @@ export default function Clips({ me }: { me: Me | null }) {
   const channels = useMemo(() => {
     const keys: { id: string; title: string }[] = [];
     for (const cl of clips) if (!keys.find((k) => k.id === cl.channel_key)) keys.push({ id: cl.channel_key, title: cl.channel });
-    return [{ id: "all", title: L("Все", "All") }, ...keys];
+    return [{ id: "all", title: L("Все", "All") }, { id: "fav", title: "❤️" }, ...keys];
   }, [clips]);
-  const shown = filter === "all" ? clips : clips.filter((x) => x.channel_key === filter);
+  const shown = filter === "all" ? clips : filter === "fav" ? clips.filter((x) => x.fav) : clips.filter((x) => x.channel_key === filter);
+
+  function toggleFav(x: Clip) {
+    x.fav = !x.fav;
+    setClips([...clips]);
+    api.fav(x.id, !!x.fav).catch(() => null);
+  }
   const fresh = seen ? clips.filter((x) => x.created > seen).length : 0;
 
   return (
@@ -154,7 +173,7 @@ export default function Clips({ me }: { me: Me | null }) {
               <H1>{L("Клипы", "Clips")}</H1>
               {fresh > 0 && <Tag>+{fresh} {L("НОВЫХ", "NEW")}</Tag>}
             </View>
-            {channels.length > 2 && <Chips items={channels} value={filter} onChange={setFilter} />}
+            {clips.length > 0 && <Chips items={channels} value={filter} onChange={setFilter} />}
             {moments.length > 0 && (
               <Pressable onPress={() => setReelOpen(true)}
                          style={[s.card, s.row, { borderColor: c.accent, backgroundColor: c.accentDim, paddingVertical: 12 }]}>
@@ -182,6 +201,11 @@ export default function Clips({ me }: { me: Me | null }) {
               <View style={{ position: "absolute", top: 9, left: 9 }}>
                 <Tag>{shortReason(item)}</Tag>
               </View>
+              <Pressable onPress={() => toggleFav(item)} hitSlop={8}
+                         style={{ position: "absolute", top: 6, right: 6, width: 32, height: 32, borderRadius: 16,
+                                  alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.45)" }}>
+                <P style={{ fontSize: 15 }}>{item.fav ? "❤️" : "🤍"}</P>
+              </Pressable>
               <View style={{ position: "absolute", right: 9, bottom: 9, backgroundColor: "rgba(0,0,0,0.55)",
                              borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 }}>
                 <P style={{ fontSize: 12, fontWeight: "700" }}>{time(item.duration)}</P>

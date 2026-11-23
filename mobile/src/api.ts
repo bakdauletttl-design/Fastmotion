@@ -14,7 +14,11 @@ export type Plan = {
   priority: boolean;
   height: number;
   long_clips: boolean;
+  max_seconds: number; // самый длинный клип для кнопки «Клип» и монтажа
 };
+
+export type Usage = { channels: number; clips_today: number; clips_month: number; my_clips_month: number; clips_total: number };
+export type Word = [number, number, string];
 
 export type PlatformId = "twitch" | "youtube" | "kick" | "vk" | "tiktok";
 
@@ -26,6 +30,7 @@ export type Channel = {
   url: string;
   live: boolean;
   clips_recent: number;
+  my_clips_stream?: number; // сколько клипов этого эфира уже пришло тебе
   avatar?: string | null;
   display?: string;
 };
@@ -53,6 +58,7 @@ export type Me = {
   telegram_username: string | null;
   bot_username: string;
   channels: Channel[];
+  usage?: Usage;
 };
 
 export type Clip = {
@@ -66,6 +72,8 @@ export type Clip = {
   reason: string;
   title: string | null;
   rating: number;
+  fav?: boolean;
+  words?: Word[];
   kind: string;
   created: number;
   duration: number;
@@ -126,7 +134,8 @@ type Session = { token: string; user: Me };
 
 export type LiveInfo = { live: boolean; max_seconds: number; playlist: string | null; url: string };
 export type Rendered = { id: string; video: string; duration: number };
-export type EditOptions = { start: number; end: number; vertical: boolean; subtitles: boolean; title?: string | null };
+export type Style = { font?: string; music?: string | null; music_volume?: number; overlay?: string | null; overlay_pos?: "top" | "corner" };
+export type EditOptions = Style & { start: number; end: number; vertical: boolean; subtitles: boolean; title?: string | null; words?: Word[] | null };
 export type Part = { clip: string; start: number; end: number };
 
 export const api = {
@@ -154,8 +163,21 @@ export const api = {
   edit: (id: string, o: EditOptions) => call<Rendered>("POST", `/clips/${encodeURIComponent(id)}/edit`, o),
   sendClip: (id: string, edit?: string) =>
     call<{ ok: boolean }>("POST", `/clips/${encodeURIComponent(id)}/telegram`, { edit: edit ?? null }),
-  highlights: (parts: Part[], vertical: boolean, subtitles: boolean, title?: string | null) =>
-    call<Rendered>("POST", "/highlights", { parts, vertical, subtitles, title: title ?? null }),
+  highlights: (parts: Part[], vertical: boolean, subtitles: boolean, title?: string | null, style: Style & { transition?: string } = {}) =>
+    call<Rendered>("POST", "/highlights", { parts, vertical, subtitles, title: title ?? null, ...style }),
+  fav: (id: string, on: boolean) => call<{ ok: boolean }>("POST", `/clips/${encodeURIComponent(id)}/fav`, { on }),
+  /** Своя музыка или видео для монтажа: файл с телефона уходит на сервер как есть. */
+  upload: async (kind: "audio" | "video", uri: string): Promise<{ id: string }> => {
+    if (DEMO) return { id: `${kind}_demo00000000` };
+    const blob = await (await fetch(uri)).blob();
+    const res = await fetch(`${API_URL}/uploads?kind=${kind}`, {
+      method: "POST", body: blob,
+      headers: { "Accept-Language": LANG, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.detail ?? L("Сервер не ответил", "Server did not respond"));
+    return data;
+  },
   sendHighlights: (id: string) => call<{ ok: boolean }>("POST", `/highlights/${id}/telegram`),
 };
 

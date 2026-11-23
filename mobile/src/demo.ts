@@ -4,20 +4,26 @@ import { L } from "./i18n";
 
 const now = () => Date.now() / 1000;
 const plan = (id: string, title: string, price_usd: number, channels: number, clips: number, vertical: boolean,
-              priority: boolean, height: number, long_clips = false) =>
-  ({ id, title, price_usd, channels, clips_per_stream: clips, vertical, priority, height, long_clips });
+              priority: boolean, height: number, max_seconds: number, long_clips = false) =>
+  ({ id, title, price_usd, channels, clips_per_stream: clips, vertical, priority, height, max_seconds, long_clips });
 
 const PLANS = [
-  plan("trial", L("Пробный, 7 дней", "Trial, 7 days"), 0, 1, 5, false, false, 720),
-  plan("standard", "Standard", 9.99, 3, 20, true, false, 720),
-  plan("pro", "Pro", 19.99, 6, 100, true, true, 1080),
-  plan("max", "Max", 49.99, 10, 200, true, true, 1440, true),
+  plan("trial", L("Пробный, 3 дня", "Trial, 3 days"), 0, 1, 5, false, false, 720, 30),
+  plan("standard", "Standard", 10, 3, 20, true, false, 720, 60),
+  plan("pro", "Pro", 20, 5, 50, true, true, 1080, 90),
+  plan("max", "Max", 50, 10, 100, true, true, 1440, 120, true),
 ];
 
 const ch = (platform: string, name: string, title: string, live: boolean, clips_recent: number) => ({
   key: `${platform}:${name.toLowerCase()}`, platform, platform_title: title, name, url: `https://${platform}.tv/${name}`,
-  live, clips_recent, avatar: null, display: name.replace(/^@/, ""),
+  live, clips_recent, my_clips_stream: live ? clips_recent : 0, avatar: null, display: name.replace(/^@/, ""),
 });
+
+// пример распознанной речи стримера: [начало, конец, слово]
+const WORDS: [number, number, string][] = [
+  [3.2, 3.6, "смотри"], [3.6, 3.9, "что"], [3.9, 4.2, "он"], [4.3, 4.8, "сделал"], [5.0, 5.4, "со"],
+  [5.4, 6.0, "скином"], [6.2, 6.9, "дефолтной"], [7.0, 7.6, "гранаты"], [8.0, 8.5, "это"], [8.5, 9.2, "нереально"],
+];
 
 let channels = [
   ch("twitch", "evelone2004", "Twitch", true, 7),
@@ -28,7 +34,7 @@ let channels = [
 const clip = (id: string, channel: string, platform: string, platform_title: string, title: string, reason: string,
               kind: string, ago: number, thumb: number) => ({
   id, channel, channel_key: `${platform}:${channel.toLowerCase()}`, platform, platform_title, title, reason, kind,
-  rating: 0, created: now() - ago, duration: 12, source_duration: 12, moment: 7, quality: 1080,
+  rating: 0, fav: id === "d1", words: WORDS, created: now() - ago, duration: 12, source_duration: 12, moment: 7, quality: 1080,
   messages: ["xd_maks: ААААА", "kira: КАК ОН ЭТО СДЕЛАЛ", "pro100: клип клип клип"],
   video: "demo/clip.mp4", vertical: "demo/clip_9x16.mp4", thumb: `demo/thumb${thumb}.jpg`,
 });
@@ -43,6 +49,7 @@ let clips = [
 const me = () => ({
   id: 1, email: null, name: "Demo", provider: "demo", plan: PLANS[2], plan_until: now() + 25 * 86400,
   telegram_linked: true, telegram_username: "demo", bot_username: "HypeCut_bot", channels,
+  usage: { channels: channels.length, clips_today: 9, clips_month: 37, my_clips_month: made, clips_total: 52 },
 });
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -81,6 +88,11 @@ export async function demoCall(method: string, path: string, body: any): Promise
                moment: 9 };
     clips = [x, ...clips];
     return x;
+  }
+  if (p.endsWith("/fav")) {
+    const id = decodeURIComponent(p.split("/")[2]);
+    clips = clips.map((x) => (x.id === id ? { ...x, fav: body.on } : x));
+    return { ok: true };
   }
   if (p.startsWith("/live/")) return { live: true, max_seconds: 90, playlist: "demo/stream.mp4", url: "https://twitch.tv" };
   if (p.endsWith("/edit") || p === "/highlights") {

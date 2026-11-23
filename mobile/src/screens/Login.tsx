@@ -97,7 +97,7 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
                   onPress={() => run("dev", () => api.loginDev("tester"))} />
         )}
         <P dim style={{ fontSize: 12, textAlign: "center", marginTop: 4 }}>
-          {L("7 дней бесплатно · без карты. Продолжая, вы принимаете ", "7 days free · no card. By continuing you accept the ")}
+          {L("3 дня бесплатно · без карты. Продолжая, вы принимаете ", "3 days free · no card. By continuing you accept the ")}
           <P dim style={{ fontSize: 12, textDecorationLine: "underline" }} onPress={() => Linking.openURL(`${API_URL}/terms`)}>
             {L("условия использования", "terms of use")}
           </P>

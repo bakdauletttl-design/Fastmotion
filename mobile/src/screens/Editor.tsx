@@ -2,11 +2,12 @@
 import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, PanResponder, ScrollView, Share, Switch, TextInput, View } from "react-native";
-import { api, Clip, Me, Rendered, withToken } from "../api";
+import { api, Clip, Me, Rendered, Style, withToken, Word } from "../api";
 import { reel } from "../highlights";
 import { L } from "../i18n";
 import { saveToGallery } from "../save";
 import { Button, c, Chips, P, s } from "../ui";
+import StylePanel from "./StylePanel";
 
 const time = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
 const HANDLE = 22;
@@ -114,17 +115,62 @@ export function Result(p: { video: string; onTelegram: () => Promise<unknown>; o
   );
 }
 
+// Субтитры кусками по 3 слова: каждый кусок можно исправить, время делится между словами поровну
+type Chunk = { start: number; end: number; text: string };
+
+function toChunks(words: Word[]): Chunk[] {
+  const out: Chunk[] = [];
+  for (let i = 0; i < words.length; i += 3) {
+    const g = words.slice(i, i + 3);
+    out.push({ start: g[0][0], end: g[g.length - 1][1], text: g.map((w) => w[2]).join(" ") });
+  }
+  return out;
+}
+
+function toWords(chunks: Chunk[]): Word[] {
+  const out: Word[] = [];
+  for (const ch of chunks) {
+    const parts = ch.text.split(/\s+/).filter(Boolean);
+    const step = (ch.end - ch.start) / Math.max(parts.length, 1);
+    parts.forEach((t, i) => out.push([+(ch.start + i * step).toFixed(2), +(ch.start + (i + 1) * step).toFixed(2), t]));
+  }
+  return out;
+}
+
+function CaptionEditor({ chunks, start, end, onChange, onSeek }:
+  { chunks: Chunk[]; start: number; end: number; onChange: (c: Chunk[]) => void; onSeek: (t: number) => void }) {
+  const visible = chunks.map((ch, i) => ({ ch, i })).filter(({ ch }) => ch.end > start && ch.start < end);
+  if (!visible.length) {
+    return <P dim style={{ fontSize: 13 }}>{L("В этом куске стример ничего не говорит.", "Nothing is said in this part.")}</P>;
+  }
+  return (
+    <View style={{ gap: 8 }}>
+      {visible.map(({ ch, i }) => (
+        <View key={i} style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+          <P dim style={{ fontSize: 12, width: 44 }} onPress={() => onSeek(ch.start)}>{(ch.start - start).toFixed(1)}s</P>
+          <TextInput style={[s.input, { flex: 1, minWidth: 0, height: 44 }]} value={ch.text} maxLength={60}
+                     onChangeText={(text) => onChange(chunks.map((x, j) => (j === i ? { ...x, text } : x)))} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function Editor({ clip, me, onClose }: { clip: Clip; me: Me | null; onClose: () => void }) {
   const full = clip.source_duration ?? clip.duration;
   const canVertical = !!me?.plan?.vertical;
   const [start, setStart] = useState(0);
-  const [end, setEnd] = useState(full);
+  const [end, setEnd] = useState(Math.min(full, me?.plan?.max_seconds ?? 30));
   const [pos, setPos] = useState(0);
   const [vertical, setVertical] = useState(canVertical);
   const [subtitles, setSubtitles] = useState(true);
   const [title, setTitle] = useState(clip.title ?? "");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Rendered | null>(null);
+  const [style, setStyle] = useState<Style>({ font: "classic", music_volume: 0.35, overlay_pos: "top" });
+  const [chunks, setChunks] = useState<Chunk[]>(() => toChunks(clip.words ?? []));
+  const [fixing, setFixing] = useState(false);
+  const maxLen = me?.plan?.max_seconds ?? 30;
 
   const startRef = useRef(start), endRef = useRef(end);
   startRef.current = start;
@@ -144,6 +190,11 @@ export default function Editor({ clip, me, onClose }: { clip: Clip; me: Me | nul
   }, [player]);
 
   function change(a: number, b: number, moved: "start" | "end") {
+    // не длиннее, чем позволяет тариф
+    if (b - a > maxLen) {
+      if (moved === "start") b = a + maxLen;
+      else a = b - maxLen;
+    }
     setStart(a);
     setEnd(b);
     player.currentTime = moved === "start" ? a : Math.max(a, b - 1.5);
@@ -152,7 +203,8 @@ export default function Editor({ clip, me, onClose }: { clip: Clip; me: Me | nul
   async function render() {
     setBusy(true);
     try {
-      setDone(await api.edit(clip.id, { start, end, vertical, subtitles, title }));
+      setDone(await api.edit(clip.id, { start, end, vertical, subtitles, title, ...style,
+                                        words: fixing ? toWords(chunks) : null }));
       player.pause();
     } catch (e: any) {
       Alert.alert(L("Не получилось смонтировать", "Render failed"), String(e?.message ?? e));
@@ -164,8 +216,8 @@ export default function Editor({ clip, me, onClose }: { clip: Clip; me: Me | nul
   function addToReel() {
     reel.add({ clip: clip.id, start, end, title: title || clip.channel, thumb: clip.thumb });
     Alert.alert(L("Добавлено в хайлайты", "Added to highlights"),
-                L("Собери несколько моментов и склей их в один ролик во вкладке «Клипы».",
-                  "Collect a few moments and join them into one video in the Clips tab."));
+                L("Собери несколько моментов и склей их в один ролик во вкладке «Монтаж».",
+                  "Collect a few moments and join them into one video in the Editor tab."));
   }
 
   return (
@@ -184,8 +236,8 @@ export default function Editor({ clip, me, onClose }: { clip: Clip; me: Me | nul
           <TrimBar duration={full} start={start} end={end} position={pos} moment={clip.moment}
                    onChange={change} onSeek={(t) => { player.currentTime = t; player.play(); }} />
           <P dim style={{ fontSize: 12 }}>
-            {L("Тяни зелёные ручки, чтобы обрезать. Жёлтая черта: самый яркий момент.",
-               "Drag the green handles to trim. The yellow line is the peak moment.")}
+            {L(`Тяни зелёные ручки, чтобы обрезать (на твоём тарифе до ${maxLen} сек). Жёлтая черта: самый яркий момент.`,
+               `Drag the green handles to trim (up to ${maxLen} s on your plan). The yellow line is the peak moment.`)}
           </P>
           <Chips
             items={[{ id: "v", title: L("9:16 вебка + игра", "9:16 cam + game") }, { id: "h", title: "16:9" }]}
@@ -202,12 +254,21 @@ export default function Editor({ clip, me, onClose }: { clip: Clip; me: Me | nul
             <>
               <TextInput style={s.input} value={title} onChangeText={setTitle} maxLength={80}
                          placeholder={L("Заголовок сверху (можно пусто)", "Hook title (optional)")} placeholderTextColor={c.dim} />
-              <View style={[s.row, s.card, { paddingVertical: 10 }]}>
-                <P>{L("Субтитры по словам", "Word-by-word captions")}</P>
-                <Switch value={subtitles} onValueChange={setSubtitles} trackColor={{ true: c.accent, false: c.line }} />
+              <View style={[s.card, { paddingVertical: 10, gap: 10 }]}>
+                <View style={s.row}>
+                  <P>{L("Субтитры по словам", "Word-by-word captions")}</P>
+                  <Switch value={subtitles} onValueChange={setSubtitles} trackColor={{ true: c.accent, false: c.line }} />
+                </View>
+                {subtitles && chunks.length > 0 && (
+                  fixing
+                    ? <CaptionEditor chunks={chunks} start={start} end={end} onChange={setChunks}
+                                     onSeek={(t) => { player.currentTime = t; player.play(); }} />
+                    : <Button kind="outline" title={L("✏️ Исправить текст субтитров", "✏️ Fix caption text")} onPress={() => setFixing(true)} />
+                )}
               </View>
             </>
           )}
+          <StylePanel value={style} onChange={setStyle} vertical={vertical} />
           <Button title={L("Смонтировать", "Render")} busy={busy} onPress={render} />
           <Button kind="outline" title={L("+ В хайлайты", "+ Add to highlights")} onPress={addToReel} />
         </ScrollView>
