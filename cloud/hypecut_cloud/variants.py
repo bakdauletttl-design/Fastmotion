@@ -65,7 +65,8 @@ def path_for(clips_dir: Path, clip, w: Want) -> Path | None:
     ss, t = lengths(clip, w.long)
     if w.vertical:
         words = [enhance.Word(*x) for x in json.loads(clip["words"] or "[]")]
-        return enhance.make_vertical(src, out, words, w.height, ss, t)
+        return enhance.make_vertical(src, out, words, w.height, ss, t, title=clip["title"],
+                                     moment=moment_for(clip, w.long))
     if w.height == (clip["height"] or w.height) and not ss and t is None:
         shutil.copyfile(src, out)  # исходник уже в нужном качестве и длине
         return out

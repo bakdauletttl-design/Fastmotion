@@ -78,12 +78,19 @@ def chunks(words: list[Word], size: int = 3) -> list[list[Word]]:
     return out
 
 
-def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: int | None = None) -> Path | None:
-    """Крупные субтитры в стиле TikTok: белые слова, текущее слово зелёное."""
-    if not words:
+HOOK_ASS = "&H0000E5FF"  # жёлтый, как у клиперов: заголовок-крючок в первые секунды
+
+
+def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: int | None = None,
+              hook: str | None = None, hook_y: int | None = None, hook_seconds: float = 3.0) -> Path | None:
+    """Крупные субтитры в стиле TikTok: белые слова, текущее слово зелёное.
+
+    hook: заголовок клипа крупными жёлтыми буквами в первые секунды, чтобы зритель не пролистал.
+    """
+    if not words and not hook:
         return None
     y = y if y is not None else int(height * 0.62)
-    size = int(width * 0.075)
+    size = int(width * 0.08)
     lines = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}",
         "WrapStyle: 0", "", "[V4+ Styles]",
@@ -92,9 +99,19 @@ def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: 
         "Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Cap,DejaVu Sans,{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,"
         "1,0,0,0,100,100,0,0,1,6,2,5,60,60,0,1",
+        f"Style: Hook,DejaVu Sans,{int(width * 0.082)},{HOOK_ASS},{HOOK_ASS},&H00000000,&H64000000,"
+        f"1,0,0,0,100,100,0,0,1,{max(4, width // 120)},3,5,{int(width * 0.04)},{int(width * 0.04)},0,1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
+    if hook:
+        hy = hook_y if hook_y is not None else int(height * 0.2)
+        # pop-эффект: заголовок «выпрыгивает» за 0.15 секунды
+        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(hook_seconds)},Hook,,0,0,0,,"
+                     f"{{\\an5\\pos({width // 2},{hy})\\fscx70\\fscy70\\t(0,150,\\fscx100\\fscy100)}}"
+                     + _clean(hook).upper())
     for group in chunks(words):
+        if hook and group[-1].end <= hook_seconds:
+            continue  # пока висит заголовок, субтитры не мешают
         for i, w in enumerate(group):
             end = group[i + 1].start if i + 1 < len(group) else w.end + 0.25
             parts = [(f"{{\\c{ACCENT_ASS}}}" if j == i else "") + _clean(x.text).upper() +
@@ -111,6 +128,7 @@ class Layout:
     kind: str                      # split | follow | blur
     box: tuple[int, int, int, int] | None = None   # область вебки (x, y, w, h) в пикселях исходника
     cx: int | None = None          # центр лица по горизонтали для follow
+    face: tuple[int, int, int, int] | None = None  # само лицо стримера
     src_w: int = 0
     src_h: int = 0
 
@@ -132,52 +150,150 @@ def find_layout(video: Path, samples: int = 8) -> Layout:
     if not total or not sw or sw < sh:
         cap.release()
         return Layout("blur", src_w=sw, src_h=sh)
-    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    faces: list[tuple[int, int, int, int]] = []
+    detect = _face_detector(cv2, sw, sh)
+    # все лица на каждом кадре: вебка стоит на месте, а лица в игре и в мемах появляются и исчезают
+    seen: list[list[tuple[int, int, int, int]]] = []
+    grays = []
     for i in range(samples):
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(total * (i + 0.5) / samples))
         ok, frame = cap.read()
         if not ok:
             continue
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        found = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(sh // 20, sh // 20))
-        if len(found):
-            faces.append(tuple(int(v) for v in max(found, key=lambda f: f[2] * f[3])))
+        seen.append(detect(frame))
+        grays.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
     cap.release()
-    if len(faces) < max(2, samples // 3):
+    layout = pick_layout(seen, sw, sh, samples)
+    if layout.kind == "split" and layout.box and grays:
+        layout.box = snap_to_webcam(cv2, grays, layout.box, layout.face, sw, sh)
+    return layout
+
+
+def snap_to_webcam(cv2, grays, box, face, sw: int, sh: int):
+    """Подгоняет рамку под края самой вебки.
+
+    Края вебки стоят на месте во всех кадрах, а игра под ними двигается, поэтому
+    усредняем резкие перепады яркости по кадрам и ищем самые сильные линии вокруг лица.
+    """
+    import numpy as np
+    fx, fy, fw, fh = face
+    gx = np.mean([np.abs(cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3)) for g in grays], axis=0)
+    gy = np.mean([np.abs(cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3)) for g in grays], axis=0)
+    def strongest(profile, lo, hi, outer: bool):
+        lo, hi = max(1, int(lo)), min(len(profile) - 1, int(hi))
+        if hi <= lo:
+            return None
+        seg = profile[lo:hi]
+        bar = 2.5 * (float(np.median(profile)) + 1e-3)
+        peaks = [i for i in range(len(seg)) if seg[i] > bar and seg[i] >= seg[max(0, i - 2):i + 3].max()]
+        if not peaks:
+            return None
+        # самая сильная линия; при равенстве берём дальнюю от лица: внутри вебки тоже бывают линии
+        best = max(peaks, key=lambda i: (round(float(seg[i]) / bar, 1), i if outer else -i))
+        return lo + best
+
+    # 1) верх и низ: горизонтальные линии над и под лицом
+    c0, c1 = max(0, fx - fw), min(sw, fx + 2 * fw)
+    rows = gy[:, c0:c1].mean(axis=1)
+    top = strongest(rows, fy - 4 * fh, fy - fh * 0.2, outer=False)
+    bottom = strongest(rows, fy + fh * 1.2, fy + 5 * fh, outer=True)
+    y0 = top if top is not None else (0 if fy < 2 * fh else box[1])
+    y1 = bottom if bottom is not None else (sh if fy + fh > sh - 2 * fh else box[1] + box[3])
+    # 2) лево и право: вертикальные линии, которые идут через всю высоту вебки
+    cols = gx[y0:y1].mean(axis=0) if y1 > y0 else gx.mean(axis=0)
+    span = (y1 - y0) * 2.2  # вебка редко шире, чем 2.2 своей высоты
+    left = strongest(cols, fx + fw - span, fx - fw * 0.3, outer=False)
+    right = strongest(cols, fx + fw * 1.3, (left if left is not None else fx) + span, outer=True)
+    x0 = left if left is not None else (0 if fx < 2 * fw else box[0])
+    x1 = right if right is not None else (sw if fx + fw > sw - 2 * fw else box[0] + box[2])
+    w, h = (x1 - x0) // 2 * 2, (y1 - y0) // 2 * 2
+    if w < fw * 2 or h < fh * 1.5:
+        return box
+    return (int(x0) + 2, int(y0) + 2, int(w) - 4, int(h) - 4)  # пара пикселей внутрь, чтобы не попала рамка
+
+
+YUNET = Path(__file__).parent / "models" / "face_detection_yunet_2023mar.onnx"
+
+
+def _face_detector(cv2, sw: int, sh: int):
+    """Нейросеть YuNet находит даже маленькие лица в наушниках и очках; если её нет, берём старый Haar."""
+    scale = min(1.0, 960 / sw)
+    iw, ih = int(sw * scale), int(sh * scale)
+    if YUNET.exists() and hasattr(cv2, "FaceDetectorYN"):
+        net = cv2.FaceDetectorYN.create(str(YUNET), "", (iw, ih), 0.6, 0.3, 50)
+
+        def yunet(frame):
+            _, faces = net.detect(cv2.resize(frame, (iw, ih)) if scale < 1 else frame)
+            return [tuple(int(v / scale) for v in f[:4]) for f in (faces if faces is not None else [])]
+        return yunet
+    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+
+    def haar(frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        found = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(sh // 25, sh // 25))
+        return [tuple(int(v) for v in f) for f in found]
+    return haar
+
+
+def pick_layout(seen: list[list[tuple[int, int, int, int]]], sw: int, sh: int, samples: int) -> Layout:
+    """Выбирает раскладку по лицам на кадрах: самое «постоянное» лицо считается стримером."""
+    clusters: list[dict] = []  # центр, список рамок, на скольких кадрах
+    for frame_faces in seen:
+        hit: set[int] = set()
+        for f in frame_faces:
+            cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
+            for k, c in enumerate(clusters):
+                if k not in hit and abs(cx - c["cx"]) < max(f[2], sw * 0.04) and abs(cy - c["cy"]) < max(f[3], sh * 0.06):
+                    c["boxes"].append(f)
+                    c["frames"] += 1
+                    hit.add(k)
+                    break
+            else:
+                clusters.append({"cx": cx, "cy": cy, "boxes": [f], "frames": 1})
+                hit.add(len(clusters) - 1)
+    need = max(2, int(samples * 0.4))
+    steady = [c for c in clusters if c["frames"] >= need]
+    if not steady:
         return Layout("blur", src_w=sw, src_h=sh)
-    faces.sort(key=lambda f: f[2])
-    x, y, w, h = faces[len(faces) // 2]           # медиана, чтобы случайные срабатывания не мешали
+    best = max(steady, key=lambda c: (c["frames"], -abs(c["cx"] - sw / 2)))
+    boxes = sorted(best["boxes"], key=lambda f: f[2])
+    x, y, w, h = boxes[len(boxes) // 2]  # медиана, чтобы случайные срабатывания не мешали
     cx, cy = x + w // 2, y + h // 2
-    steady = sum(abs(f[0] + f[2] // 2 - cx) < w and abs(f[1] + f[3] // 2 - cy) < h for f in faces)
-    if w * h > sw * sh * 0.03 or steady < len(faces) * 0.6:
-        return Layout("follow", cx=cx, src_w=sw, src_h=sh)
-    # вебка: берём область вокруг лица с запасом и пропорциями верхней части кадра (1080x640)
-    bw = min(sw, int(w * 4.2))
+    if w * h > sw * sh * 0.03:
+        return Layout("follow", cx=cx, src_w=sw, src_h=sh)  # разговорный стрим: лицо крупно
+    # вебка поверх игры: область вокруг лица (и соседних лиц, если в кадре двое) с пропорциями верха вертикали
+    x0, y0, x1, y1 = x, y, x + w, y + h
+    for c in clusters:
+        if c is not best and c["frames"] >= 2 and abs(c["cx"] - cx) < w * 5 and abs(c["cy"] - cy) < h * 4:
+            bx_, by_, bw_, bh_ = sorted(c["boxes"], key=lambda f: f[2])[len(c["boxes"]) // 2]
+            x0, y0, x1, y1 = min(x0, bx_), min(y0, by_), max(x1, bx_ + bw_), max(y1, by_ + bh_)
+    ccx, ccy = (x0 + x1) // 2, (y0 + y1) // 2
+    bw = min(sw, max(int(w * 6), int((x1 - x0) * 2.2)))
     bh = min(sh, int(bw * 640 / 1080))
-    bx = min(max(0, cx - bw // 2), sw - bw)
-    by = min(max(0, cy - bh // 2), sh - bh)
-    return Layout("split", box=(bx, by, bw - bw % 2, bh - bh % 2), src_w=sw, src_h=sh)
+    bx = min(max(0, ccx - bw // 2), sw - bw)
+    by = min(max(0, ccy - int(bh * 0.45)), sh - bh)
+    return Layout("split", box=(bx, by, bw - bw % 2, bh - bh % 2), src_w=sw, src_h=sh, face=(x, y, w, h))
 
 
-def vertical_graph(layout: Layout, width: int = W, height: int = H) -> tuple[str, int]:
-    """Фильтр ffmpeg для вертикали width x height и высота, на которой ставить субтитры."""
+def vertical_graph(layout: Layout, width: int = W, height: int = H, moment: float | None = None) -> tuple[str, int]:
+    """Фильтр ffmpeg для вертикали width x height (с наездом на момент) и высота, на которой ставить субтитры."""
     if layout.kind == "split" and layout.box:
         x, y, w, h = layout.box
         top = int(height / 3) // 2 * 2
         bottom = height - top
         graph = (f"[0:v]crop={w}:{h}:{x}:{y},scale={width}:{top}:force_original_aspect_ratio=increase,"
                  f"crop={width}:{top}[cam];"
-                 f"[0:v]scale=-2:{bottom},crop={width}:{bottom}[game];"
+                 f"[0:v]scale=-2:{bottom},crop={width}:{bottom},{punch_in(width, bottom, moment)}[game];"
                  "[cam][game]vstack=inputs=2,setsar=1[base]")
         return graph, top + int(height * 0.073)
     if layout.kind == "follow" and layout.cx is not None and layout.src_h:
         cw = int(layout.src_h * 9 / 16) // 2 * 2
         x = min(max(0, layout.cx - cw // 2), max(0, layout.src_w - cw))
-        graph = f"[0:v]crop={cw}:{layout.src_h}:{x}:0,scale={width}:{height},setsar=1[base]"
+        graph = (f"[0:v]crop={cw}:{layout.src_h}:{x}:0,scale={width}:{height},"
+                 f"{punch_in(width, height, moment)},setsar=1[base]")
         return graph, int(height * 0.72)
     graph = (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},boxblur=20:5[bg];"
-             f"[0:v]scale={width}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[base]")
+             f"[0:v]scale={width}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,{punch_in(width, height, moment)},"
+             "setsar=1[base]")
     return graph, int(height * 0.74)
 
 
@@ -200,18 +316,34 @@ def _ass_path(p: Path) -> str:
     return p.resolve().as_posix().replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
-def make_vertical(src: Path, out: Path, words: list[Word] | None = None, height: int = 1080,
-                  ss: float = 0.0, t: float | None = None) -> Path | None:
-    """Вертикальная 9:16 версия: вебка сверху или кадр по лицу, плюс субтитры.
+def punch_in(vw: int, vh: int, at: float | None, zoom: float = 0.12, length: float = 1.6) -> str:
+    """Резкий наезд камеры на самом моменте, как делают клиперы. Пустая строка, если момент неизвестен."""
+    if at is None or at < 0:
+        return "null"
+    a, b = max(0.0, at - 0.2), at + length
+    k = f"(1+{zoom}*between(t,{a:.2f},{b:.2f}))"
+    return (f"scale=w='trunc({vw}*{k}/2)*2':h='trunc({vh}*{k}/2)*2':eval=frame,"
+            f"crop={vw}:{vh}:(iw-{vw})/2:(ih-{vh})/2,setsar=1")
 
-    height: качество (ширина вертикали), ss и t: с какой секунды и сколько взять из исходника.
+
+def make_vertical(src: Path, out: Path, words: list[Word] | None = None, height: int = 1080,
+                  ss: float = 0.0, t: float | None = None, title: str | None = None,
+                  moment: float | None = None) -> Path | None:
+    """Вертикальная 9:16 версия в стиле клиперов.
+
+    Вебка сверху и игра снизу (или кадр по лицу), заголовок-крючок в начале, субтитры по словам,
+    наезд камеры на самом моменте. height: качество (ширина вертикали); ss и t: с какой секунды
+    и сколько взять из исходника; moment: секунда момента внутри готового клипа.
     """
     layout = find_layout(src)
     vw, vh = size_for(height)
-    graph, sub_y = vertical_graph(layout, vw, vh)
+    graph, sub_y = vertical_graph(layout, vw, vh, moment)
+    hook_y = sub_y - int(vh * 0.073) if layout.kind == "split" else int(vh * 0.2)
+    if layout.kind == "split":
+        sub_y = hook_y + int((vh - hook_y) * 0.42)  # субтитры посередине игры, как в примерах
     shifted = [Word(w.start - ss, w.end - ss, w.text) for w in (words or [])
                if w.end > ss and (t is None or w.start < ss + t)]
-    ass = write_ass(shifted, out.with_suffix(".ass"), vw, vh, y=sub_y)
+    ass = write_ass(shifted, out.with_suffix(".ass"), vw, vh, y=sub_y, hook=title, hook_y=hook_y)
     graph += f";[base]ass='{_ass_path(ass)}'[v]" if ass else ";[base]null[v]"
     cut = (["-ss", f"{ss:.2f}"] if ss else []) + (["-t", f"{t:.2f}"] if t else [])
     p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *cut, "-i", str(src),
