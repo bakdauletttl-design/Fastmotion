@@ -472,3 +472,57 @@ def test_quality_tiers_and_long_clips_for_max(env, tmp_path):
         assert path is None
     finally:
         variants.TG_LIMIT = real_limit
+
+
+def test_watch_live_cut_edit_and_send(env, tmp_path):
+    """Человек смотрит эфир в приложении, жмёт «Клип», монтирует и отправляет себе в Telegram."""
+    from hypecut_cloud.auth import issue_session
+
+    cfg, db, tg = env
+    cfg.segment_seconds = 0
+    segs = _make_segments(tmp_path)
+    fan = db.upsert_user("dev", "fan")
+    other = db.upsert_user("dev", "other")
+    db.x("UPDATE users SET telegram_chat_id=21 WHERE id=?", (fan["id"],))
+    db.x("UPDATE users SET telegram_chat_id=22 WHERE id=?", (other["id"],))
+    for u in (fan, other):
+        db.set_plan(u["id"], "standard", time.time() + 86400)
+        db.follow(u["id"], "kick:streamer")
+    disp = Dispatcher(cfg, db, tg)
+    w = ChannelWorker(cfg, db, disp, "kick:streamer", recorder=FakeRecorder(segs))
+    client = TestClient(create_app(cfg, db, live=lambda k: w if k == "kick:streamer" else None, telegram=tg))
+    tok = issue_session(fan["id"], SECRET)
+    h = {"Authorization": f"Bearer {tok}"}
+
+    info = client.get("/live/kick:streamer", headers=h).json()
+    assert info["live"] and info["playlist"].endswith(f"token={tok}")
+    pl = client.get(f"/live/kick:streamer/index.m3u8?token={tok}")
+    assert pl.status_code == 200 and "#EXT-X-DISCONTINUITY" in pl.text
+    first = [x for x in pl.text.splitlines() if x.startswith("seg_")][0]
+    assert client.get(f"/live/kick:streamer/{first}").status_code == 200
+    assert client.get("/live/twitch:nobody/index.m3u8", headers=h).status_code == 404
+
+    clip = client.post("/live/kick:streamer/clip", json={"seconds": 8, "behind": 2}, headers=h).json()
+    assert clip["kind"] == "user" and 5 <= clip["source_duration"] <= 11
+    assert tg.videos == []  # свой клип не рассылается подписчикам и не идёт в Telegram сам
+    assert client.post("/live/kick:streamer/clip", json={"seconds": 8}, headers=h).status_code == 429
+    # другой подписчик этот клип не видит, а лимит авто-клипов он не тратит
+    assert client.get("/clips", headers={"Authorization": f"Bearer {issue_session(other['id'], SECRET)}"}).json() == []
+    assert db.received_in_stream(fan["id"], db.clip(clip["id"])["stream_id"]) == 0
+
+    ed = client.post(f"/clips/{clip['id']}/edit", headers=h,
+                     json={"start": 1, "end": 5, "vertical": True, "subtitles": False, "title": "Тест"}).json()
+    assert ed["duration"] == 4
+    assert client.get(ed["video"].replace("http://x", "") + f"?token={tok}").status_code == 200
+    assert client.post(f"/clips/{clip['id']}/edit", headers=h, json={"start": 3, "end": 3.5}).status_code == 400
+    assert client.post(f"/clips/{clip['id']}/telegram", headers=h, json={"edit": ed["id"]}).json()["ok"]
+    assert tg.videos[-1][0] == 21
+
+    # хайлайты: два куска клипа подряд в одном ролике
+    hl = client.post("/highlights", headers=h, json={"vertical": False, "parts": [
+        {"clip": clip["id"], "start": 0, "end": 3}, {"clip": clip["id"], "start": 4, "end": 7}]}).json()
+    assert hl["duration"] == 6
+    assert client.get(f"/highlights/{hl['id']}?token={tok}").status_code == 200
+    assert client.get(f"/highlights/{hl['id']}?token={issue_session(other['id'], SECRET)}").status_code == 404
+    assert client.post(f"/highlights/{hl['id']}/telegram", headers=h).json()["ok"]
+    assert client.post("/highlights", headers=h, json={"parts": []}).status_code == 400

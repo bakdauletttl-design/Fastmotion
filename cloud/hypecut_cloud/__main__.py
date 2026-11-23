@@ -37,7 +37,8 @@ async def main() -> None:
     if not twitch.enabled:
         log.info("TWITCH_CLIENT_ID не задан: без поиска стримеров, аватарок и сигнала от клипов зрителей")
     manager = Manager(cfg, db, dispatcher, twitch=twitch)
-    app = create_app(cfg, db, on_change=manager.poke, status=manager.status, twitch=twitch)
+    app = create_app(cfg, db, on_change=manager.poke, status=manager.status, twitch=twitch,
+                     live=manager.worker, telegram=api)
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")),
                                            log_level="info"))
     tasks = [asyncio.create_task(server.serve()), asyncio.create_task(manager.run())]

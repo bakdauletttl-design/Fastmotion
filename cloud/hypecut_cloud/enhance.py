@@ -374,6 +374,22 @@ def make_horizontal(src: Path, out: Path, height: int, ss: float = 0.0, t: float
     return out
 
 
+def concat(parts: list[Path], out: Path) -> Path | None:
+    """Склейка кусков в один ролик (хайлайты). Куски уже одного размера, звук выравниваем."""
+    inputs = [x for p in parts for x in ("-i", str(p))]
+    n = len(parts)
+    graph = "".join(f"[{i}:v:0]setsar=1[v{i}];[{i}:a:0]aresample=44100[a{i}];" for i in range(n)) + \
+        "".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]"
+    p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *inputs, "-filter_complex", graph,
+                        "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)],
+                       capture_output=True)
+    if p.returncode != 0 or not out.exists():
+        log.warning("Не получилось склеить хайлайты: %s", p.stderr.decode(errors="replace")[-300:])
+        return None
+    return out
+
+
 def video_height(path: Path) -> int | None:
     """Высота кадра исходника (ffprobe лежит рядом с ffmpeg)."""
     ff = Path(FFMPEG)

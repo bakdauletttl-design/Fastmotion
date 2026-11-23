@@ -114,10 +114,15 @@ class Dispatcher:
         return variants.Want(max([p.height for p in plans], default=720),
                              any(p.long_clips for p in plans), any(p.vertical for p in plans))
 
-    async def deliver(self, clip_id: str) -> int:
+    async def deliver(self, clip_id: str, only: int | None = None) -> int:
         clip = self.db.clip(clip_id)
         if clip is None:
             return 0
+        if only is not None:
+            # клип, который человек вырезал сам: только ему и только в приложение,
+            # в Telegram он отправит его сам из редактора
+            self.db.add_delivery(clip_id, only, clip["stream_id"], False)
+            return 1
         src = from_key(clip["channel"])
         head = f"🔥 {clip['title']}\n" if clip["title"] else ""
         got: list[int] = []
@@ -245,18 +250,37 @@ class ChannelWorker:
         task.add_done_callback(self._pending.discard)
         return True
 
-    async def make_clip(self, trig: Trigger) -> str | None:
+    def live_edge(self) -> float | None:
+        """Конец последнего записанного куска: самое свежее, что есть на сервере."""
+        segs = self.recorder.segments
+        return segs[-1].end if self.recorder.live and segs else None
+
+    async def cut_now(self, user_id: int, seconds: float, behind: float = 0.0) -> str | None:
+        """Кнопка «Клип» в приложении: последние seconds секунд того, что человек сейчас видит в плеере.
+        behind: на сколько секунд плеер отстаёт от самого свежего куска."""
+        edge = self.live_edge()
+        if edge is None:
+            return None
+        end = edge - max(0.0, behind)
+        start = end - seconds
+        # самый яркий момент обычно за пару секунд до нажатия: туда и наезд камеры
+        trig = Trigger(at=max(start, end - 3), reason="твой клип", score=0, kind="user")
+        return await self.make_clip(trig, window=(start, end), only_user=user_id)
+
+    async def make_clip(self, trig: Trigger, window: tuple[float, float] | None = None,
+                        only_user: int | None = None) -> str | None:
         cfg = self.cfg
         need = self.dispatcher.needs(self.channel)
-        extra_pre, extra_post = (cfg.long_extra_pre, cfg.long_extra_post) if need.long else (0.0, 0.0)
-        start, end = trig.at - cfg.pre_roll - extra_pre, trig.at + cfg.post_roll + extra_post
+        extra_pre, extra_post = (cfg.long_extra_pre, cfg.long_extra_post) if need.long and not window else (0.0, 0.0)
+        start, end = window or (trig.at - cfg.pre_roll - extra_pre, trig.at + cfg.post_roll + extra_post)
         wait = end - time.time() + cfg.segment_seconds + 1
         if wait > 0:
             await asyncio.sleep(wait)
         segments = self.recorder.segments_between(start, end)
         if not segments:
             return None
-        base = f"{self.source.safe}_{datetime.fromtimestamp(trig.at):%Y%m%d_%H%M%S}"
+        base = f"{self.source.safe}_{datetime.fromtimestamp(trig.at):%Y%m%d_%H%M%S}" + \
+            (f"_u{only_user}" if only_user is not None else "")
         clip_id, n = base, 2
         while self.db.clip(clip_id):
             clip_id, n = f"{base}_{n}", n + 1
@@ -277,8 +301,9 @@ class ChannelWorker:
         real_start = max(start, segments[0].start)
         duration = round(end - real_start, 1)
         # обычная версия короче длинной: столько отрезать в начале и в конце
-        trim_start = round(max(0.0, trig.at - cfg.pre_roll - real_start), 2) if need.long else 0.0
-        trim_end = round(extra_post, 2) if need.long else 0.0
+        long = need.long and not window
+        trim_start = round(max(0.0, trig.at - cfg.pre_roll - real_start), 2) if long else 0.0
+        trim_end = round(extra_post, 2) if long else 0.0
         self.db.add_clip(id=clip_id, channel=self.channel, stream_id=self.stream_id, file=out.name,
                          thumb=thumb.name if thumb else None, reason=trig.reason, kind=trig.kind,
                          created=trig.at, duration=duration, moment=round(trig.at - real_start, 1),
@@ -286,7 +311,7 @@ class ChannelWorker:
                          transcript=transcript or None,
                          words=json.dumps([[w.start, w.end, w.text] for w in words], ensure_ascii=False),
                          height=height, trim_start=trim_start, trim_end=trim_end)
-        count = await self.dispatcher.deliver(clip_id)
+        count = await self.dispatcher.deliver(clip_id, only=only_user)
         log.info("Клип %s (%sp) разослан %d подписчикам", clip_id, height, count)
         return clip_id
 
@@ -300,6 +325,9 @@ class Manager:
         self._factory = worker_factory or (lambda ch: ChannelWorker(
             cfg, db, dispatcher, ch, twitch=twitch, max_height=dispatcher.needs(ch).height))
         self._wake = asyncio.Event()
+
+    def worker(self, key: str) -> ChannelWorker | None:
+        return self.workers.get(key)
 
     def status(self, key: str) -> dict:
         """Идёт ли сейчас эфир у канала и сколько клипов сделано за последние 12 часов."""
@@ -337,6 +365,10 @@ class Manager:
                 f.unlink(missing_ok=True)
             self.db.delete_clip(c["id"])
             removed += 1
+        old = time.time() - self.cfg.clip_keep_days * 86400
+        for f in (self.cfg.clips_dir / "highlights").glob("hl_*.mp4"):
+            if f.stat().st_mtime < old:
+                f.unlink(missing_ok=True)
         return removed
 
     async def run(self) -> None:

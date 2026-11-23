@@ -335,7 +335,10 @@ class DB:
         self.x(f"UPDATE clips SET {sets} WHERE id=?", (*fields.values(), clip_id))
 
     def received_in_stream(self, uid: int, stream_id: str) -> int:
-        return self.one("SELECT COUNT(*) n FROM deliveries WHERE user_id=? AND stream_id=?", (uid, stream_id))["n"]
+        # клипы, которые человек вырезал сам, в лимит авто-клипов не входят
+        return self.one("SELECT COUNT(*) n FROM deliveries d JOIN clips c ON c.id=d.clip_id "
+                        "WHERE d.user_id=? AND d.stream_id=? AND COALESCE(c.kind,'')!='user'",
+                        (uid, stream_id))["n"]
 
     def add_delivery(self, clip_id: str, uid: int, stream_id: str, sent: bool) -> None:
         self.x("INSERT OR REPLACE INTO deliveries VALUES (?,?,?,?,?)",
