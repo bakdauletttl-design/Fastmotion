@@ -40,3 +40,12 @@ pip install pytest && python -m pytest -q
 
 `HypeCut.exe` собирается в GitHub Actions (`.github/workflows/windows-build.yml`).
 Каждое изменение в ветке `main` автоматически публикует новый релиз.
+
+## HypeCut как сервис (iPhone, Android, общий бот)
+
+- [`cloud/`](cloud/README.md): сервер, который сам смотрит стримы, режет клипы и рассылает их через общего бота HypeCut.
+- [`mobile/`](mobile/README.md): приложение для iPhone и Android: вход через Apple и Google, подключение Telegram, каналы, клипы, тарифы.
+
+## Права
+
+© 2026 Бакдаулет Нурак. Все права защищены. Подробнее в файле [LICENSE](LICENSE).

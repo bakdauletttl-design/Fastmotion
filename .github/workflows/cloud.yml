@@ -1,0 +1,36 @@
+name: Cloud and mobile checks
+
+on:
+  push:
+    paths: ["cloud/**", "hypecut/**", "mobile/**", ".github/workflows/cloud.yml"]
+  pull_request:
+    paths: ["cloud/**", "hypecut/**", "mobile/**", ".github/workflows/cloud.yml"]
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install -r cloud/requirements.txt pytest
+      - run: python -m pytest -q cloud/tests
+        env:
+          HYPECUT_SUBTITLES: "0"
+      - run: docker build -f cloud/Dockerfile -t hypecut-cloud .
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx expo export --platform android --output-dir /tmp/export
