@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fastmotion</title>
+<style>
+  :root { --bg:#0e0e10; --card:#18181b; --text:#efeff1; --muted:#adadb8; --accent:#9147ff; --live:#eb0400; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px; border-bottom:1px solid #2a2a2d; }
+  h1 { margin:0; font-size:20px; }
+  .badge { padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; background:#3a3a3d; }
+  .badge.live { background:var(--live); }
+  .stats { display:flex; flex-wrap:wrap; gap:16px; color:var(--muted); font-size:14px; }
+  .stats b { color:var(--text); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:10px 16px; font-size:15px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  main { padding:16px; display:grid; gap:16px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .clip { background:var(--card); border-radius:8px; overflow:hidden; }
+  .clip video { width:100%; display:block; background:#000; aspect-ratio:16/9; }
+  .clip .meta { padding:10px 12px; display:flex; justify-content:space-between; gap:8px; align-items:center; font-size:14px; }
+  .clip .meta small { color:var(--muted); display:block; }
+  .clip a, .clip .del { color:var(--muted); font-size:13px; background:none; padding:4px; }
+  .empty { color:var(--muted); padding:32px 16px; }
+  #toast { position:fixed; bottom:16px; left:16px; right:16px; max-width:420px; margin:auto; background:#2a2a2d; padding:12px 16px; border-radius:8px; display:none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Fastmotion <span id="live" class="badge">офлайн</span></h1>
+    <div class="stats" id="stats"></div>
+  </div>
+  <button id="clipBtn">✂️ Клип сейчас</button>
+</header>
+<main id="clips"></main>
+<div id="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+let known = "";
+
+function toast(text) {
+  const t = $("toast"); t.textContent = text; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 4000);
+}
+
+async function loadStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    $("live").textContent = s.live ? "LIVE" : "офлайн";
+    $("live").className = "badge" + (s.live ? " live" : "");
+    $("stats").innerHTML =
+      `<span>Канал: <b>${s.channel}</b></span>` +
+      `<span>Буфер: <b>${s.buffer_seconds} с</b></span>` +
+      `<span>Чат: <b>${s.chat_score}</b> (обычно ${s.chat_baseline})</span>` +
+      `<span>Звук: <b>${s.audio_db ?? "—"} dB</b></span>` +
+      `<span>Telegram: <b>${s.telegram ? "вкл" : "выкл"}</b></span>`;
+    $("clipBtn").disabled = !s.live;
+  } catch (e) {}
+}
+
+async function loadClips() {
+  const clips = await (await fetch("/api/clips")).json();
+  const key = clips.map(c => c.id).join();
+  if (key === known) return;
+  known = key;
+  $("clips").innerHTML = clips.length ? clips.map(c => `
+    <div class="clip">
+      <video controls preload="none" src="/clips/${c.file}" ${c.thumb ? `poster="/clips/${c.thumb}"` : ""}></video>
+      <div class="meta">
+        <div>${c.reason}<small>${new Date(c.created * 1000).toLocaleString()} · ${c.duration} с${c.sent_telegram ? " · ✈️ отправлен" : ""}</small></div>
+        <div><a href="/clips/${c.file}" download>скачать</a><button class="del" data-id="${c.id}">удалить</button></div>
+      </div>
+    </div>`).join("") : `<div class="empty">Клипов пока нет. Они появятся, когда в чате или на звуке будет всплеск.</div>`;
+}
+
+$("clips").addEventListener("click", async (e) => {
+  const id = e.target.dataset.id;
+  if (!id) return;
+  await fetch(`/api/clips/${id}`, { method: "DELETE" });
+  loadClips();
+});
+
+$("clipBtn").onclick = async () => {
+  const r = await fetch("/api/clip", { method: "POST" });
+  const body = await r.json();
+  toast(r.ok ? `Режу клип, будет готов через ~${body.ready_in} с` : body.detail);
+};
+
+loadStatus(); loadClips();
+setInterval(loadStatus, 2000);
+setInterval(loadClips, 5000);
+</script>
+</body>
+</html>
