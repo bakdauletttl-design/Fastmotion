@@ -47,9 +47,18 @@
           "savePhotosPermission": "HypeCut сохраняет клипы в галерею, когда ты нажимаешь «Скачать».",
           "isAccessMediaLocationEnabled": false
         }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "backgroundColor": "#07080A"
+        }
       ]
     ],
     "scheme": "hypecut",
-    "backgroundColor": "#07080A"
+    "backgroundColor": "#07080A",
+    "description": "Клипы со стримов Twitch, YouTube, Kick, VK и TikTok сами приходят в Telegram."
   }
 }

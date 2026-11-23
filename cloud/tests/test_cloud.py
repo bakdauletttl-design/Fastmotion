@@ -93,6 +93,8 @@ def test_effective_plan():
 def test_app_flow_login_link_follow(env):
     cfg, db, tg = env
     client = TestClient(create_app(cfg, db))
+    assert "HypeCut" in client.get("/privacy").text
+    assert client.get("/terms").status_code == 200
     r = client.post("/auth/dev", json={"name": "bak"}).json()
     h = {"Authorization": f"Bearer {r['token']}"}
     me = client.get("/me", headers=h).json()

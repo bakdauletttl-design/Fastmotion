@@ -6,6 +6,8 @@ import time
 from typing import Callable
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from pathlib import Path
+
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -80,6 +82,16 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     @app.get("/health")
     def health():
         return {"ok": True, "time": time.time()}
+
+    static = Path(__file__).parent / "static"
+
+    @app.get("/privacy", include_in_schema=False)
+    def privacy():
+        return FileResponse(static / "privacy.html", media_type="text/html")
+
+    @app.get("/terms", include_in_schema=False)
+    def terms():
+        return FileResponse(static / "terms.html", media_type="text/html")
 
     @app.get("/plans")
     def plans():
