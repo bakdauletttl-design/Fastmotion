@@ -44,7 +44,7 @@ export default function Telegram({ me, onLinked, onSkip }: { me: Me; onLinked: (
       <View>
         <Tag>ШАГ 2 ИЗ 2</Tag>
         <H1 style={{ marginTop: 20 }}>Подключи Telegram</H1>
-        <P dim>Готовые клипы будут приходить от бота @{me.bot_username || "HypeCutBot"}. Это бесплатно.</P>
+        <P dim>Готовые клипы будут приходить от бота @{me.bot_username || "HypeCut_bot"}. Это бесплатно.</P>
         <View style={[s.card, { marginTop: 28, gap: 16 }]}>
           {steps.map((t, i) => (
             <View key={t} style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>

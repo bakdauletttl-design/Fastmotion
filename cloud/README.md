@@ -44,7 +44,7 @@ t.me/HypeCutBot?start=<одноразовый код> ──► бот связ�
 Нужен любой VPS с Linux (например Hetzner CX22, около $5 в месяц, или 4 ядра за $15–20 для 20+ стримов),
 домен, указывающий на сервер, и Docker.
 
-1. Создайте бота в [@BotFather](https://t.me/BotFather): `/newbot`, имя **HypeCut**, ник вроде `HypeCutBot`. Скопируйте токен.
+1. Создайте бота в [@BotFather](https://t.me/BotFather): `/newbot`, имя **HypeCut**, ник `HypeCut_bot` (уже создан). Скопируйте токен.
 2. На сервере:
    ```bash
    git clone https://github.com/bakdauletttl-design/fastmotion.git
