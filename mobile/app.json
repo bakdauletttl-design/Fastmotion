@@ -12,7 +12,9 @@
       "usesAppleSignIn": true,
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
-          "tg"
+          "tg",
+          "snssdk1233",
+          "tiktok"
         ],
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -64,7 +66,15 @@
         }
       ],
       "expo-localization",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-font",
+      "expo-audio",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "HypeCut открывает фото, гифки и видео, чтобы наложить их на клип в монтаже."
+        }
+      ]
     ],
     "scheme": "hypecut",
     "backgroundColor": "#07080A",

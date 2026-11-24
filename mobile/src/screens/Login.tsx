@@ -2,7 +2,7 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import { GoogleSignin, isSuccessResponse } from "@react-native-google-signin/google-signin";
 import React, { useEffect, useState } from "react";
 import { Alert, Linking, Platform, View } from "react-native";
-import { api, Me, setToken } from "../api";
+import { api, DEMO, Me, setToken } from "../api";
 import { API_URL, DEV_LOGIN, GOOGLE_IOS_CLIENT_ID, GOOGLE_WEB_CLIENT_ID } from "../config";
 import { Button, c, H1, P, Screen, Tag } from "../ui";
 import { L } from "../i18n";
@@ -12,6 +12,7 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
   const [apple, setApple] = useState(false);
 
   useEffect(() => {
+    if (DEMO) return;
     GoogleSignin.configure({ webClientId: GOOGLE_WEB_CLIENT_ID, iosClientId: GOOGLE_IOS_CLIENT_ID || undefined });
     if (Platform.OS === "ios") AppleAuthentication.isAvailableAsync().then(setApple);
   }, []);
@@ -84,14 +85,19 @@ export default function Login({ onLogin }: { onLogin: (me: Me) => void }) {
             onPress={signInApple}
           />
         )}
-        <Button title={L("Продолжить с Google", "Continue with Google")} onPress={google} busy={busy === "google"}
-                kind={apple ? "outline" : "primary"} />
+        {DEMO ? (
+          <Button title={L("Открыть демо", "Open demo")} busy={busy === "demo"}
+                  onPress={() => run("demo", () => api.loginDev("demo"))} />
+        ) : (
+          <Button title={L("Продолжить с Google", "Continue with Google")} onPress={google} busy={busy === "google"}
+                  kind={apple ? "outline" : "primary"} />
+        )}
         {DEV_LOGIN && (
           <Button title={L("Тестовый вход", "Test sign-in")} kind="text" busy={busy === "dev"}
                   onPress={() => run("dev", () => api.loginDev("tester"))} />
         )}
         <P dim style={{ fontSize: 12, textAlign: "center", marginTop: 4 }}>
-          {L("7 дней бесплатно · без карты. Продолжая, вы принимаете ", "7 days free · no card. By continuing you accept the ")}
+          {L("3 дня бесплатно · без карты. Продолжая, вы принимаете ", "3 days free · no card. By continuing you accept the ")}
           <P dim style={{ fontSize: 12, textDecorationLine: "underline" }} onPress={() => Linking.openURL(`${API_URL}/terms`)}>
             {L("условия использования", "terms of use")}
           </P>

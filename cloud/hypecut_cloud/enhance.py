@@ -81,8 +81,29 @@ def chunks(words: list[Word], size: int = 3) -> list[list[Word]]:
 HOOK_ASS = "&H0000E5FF"  # жёлтый, как у клиперов: заголовок-крючок в первые секунды
 
 
+def ass_color(hex_rgb: str | None, default: str) -> str:
+    """#RRGGBB из приложения -> цвет ASS (&H00BBGGRR). Неверный цвет: оставляем обычный."""
+    m = re.fullmatch(r"#?([0-9a-fA-F]{6})", hex_rgb or "")
+    if not m:
+        return default
+    h = m.group(1).upper()
+    return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}"
+
+
+FONTS_DIR = Path(__file__).parent / "fonts"
+# шрифты для субтитров и заголовка (все с кириллицей); ширина: насколько уменьшить, чтобы влезло
+FONTS: dict[str, tuple[str, float]] = {
+    "classic": ("DejaVu Sans", 1.0),
+    "russo": ("Russo One", 1.0),
+    "rubik": ("Rubik Mono One", 0.78),
+    "lobster": ("Lobster", 1.1),
+    "pixel": ("Press Start 2P", 0.62),
+}
+
+
 def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: int | None = None,
-              hook: str | None = None, hook_y: int | None = None, hook_seconds: float = 3.0) -> Path | None:
+              hook: str | None = None, hook_y: int | None = None, hook_seconds: float = 3.0,
+              font: str = "classic", colors: dict | None = None) -> Path | None:
     """Крупные субтитры в стиле TikTok: белые слова, текущее слово зелёное.
 
     hook: заголовок клипа крупными жёлтыми буквами в первые секунды, чтобы зритель не пролистал.
@@ -90,16 +111,21 @@ def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: 
     if not words and not hook:
         return None
     y = y if y is not None else int(height * 0.62)
-    size = int(width * 0.08)
+    face, k = FONTS.get(font, FONTS["classic"])
+    colors = colors or {}
+    text_c = ass_color(colors.get("text"), "&H00FFFFFF")      # обычные слова
+    word_c = ass_color(colors.get("word"), ACCENT_ASS)        # слово, которое звучит сейчас
+    hook_c = ass_color(colors.get("title"), HOOK_ASS)         # заголовок-крючок
+    size = int(width * 0.08 * k)
     lines = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}",
         "WrapStyle: 0", "", "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Cap,DejaVu Sans,{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,"
+        f"Style: Cap,{face},{size},{text_c},{text_c},&H00000000,&H64000000,"
         "1,0,0,0,100,100,0,0,1,6,2,5,60,60,0,1",
-        f"Style: Hook,DejaVu Sans,{int(width * 0.082)},{HOOK_ASS},{HOOK_ASS},&H00000000,&H64000000,"
+        f"Style: Hook,{face},{int(width * 0.082 * k)},{hook_c},{hook_c},&H00000000,&H64000000,"
         f"1,0,0,0,100,100,0,0,1,{max(4, width // 120)},3,5,{int(width * 0.04)},{int(width * 0.04)},0,1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
@@ -114,8 +140,8 @@ def write_ass(words: list[Word], out: Path, width: int = W, height: int = H, y: 
             continue  # пока висит заголовок, субтитры не мешают
         for i, w in enumerate(group):
             end = group[i + 1].start if i + 1 < len(group) else w.end + 0.25
-            parts = [(f"{{\\c{ACCENT_ASS}}}" if j == i else "") + _clean(x.text).upper() +
-                     ("{\\c&H00FFFFFF}" if j == i else "") for j, x in enumerate(group)]
+            parts = [(f"{{\\c{word_c}}}" if j == i else "") + _clean(x.text).upper() +
+                     (f"{{\\c{text_c}}}" if j == i else "") for j, x in enumerate(group)]
             lines.append(f"Dialogue: 0,{_ts(w.start)},{_ts(end)},Cap,,0,0,0,,"
                          f"{{\\pos({width // 2},{y})}}" + " ".join(parts))
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -328,7 +354,8 @@ def punch_in(vw: int, vh: int, at: float | None, zoom: float = 0.12, length: flo
 
 def make_vertical(src: Path, out: Path, words: list[Word] | None = None, height: int = 1080,
                   ss: float = 0.0, t: float | None = None, title: str | None = None,
-                  moment: float | None = None) -> Path | None:
+                  moment: float | None = None, font: str = "classic", shift_words: bool = True,
+                  colors: dict | None = None) -> Path | None:
     """Вертикальная 9:16 версия в стиле клиперов.
 
     Вебка сверху и игра снизу (или кадр по лицу), заголовок-крючок в начале, субтитры по словам,
@@ -341,10 +368,12 @@ def make_vertical(src: Path, out: Path, words: list[Word] | None = None, height:
     hook_y = sub_y - int(vh * 0.073) if layout.kind == "split" else int(vh * 0.2)
     if layout.kind == "split":
         sub_y = hook_y + int((vh - hook_y) * 0.42)  # субтитры посередине игры, как в примерах
-    shifted = [Word(w.start - ss, w.end - ss, w.text) for w in (words or [])
-               if w.end > ss and (t is None or w.start < ss + t)]
-    ass = write_ass(shifted, out.with_suffix(".ass"), vw, vh, y=sub_y, hook=title, hook_y=hook_y)
-    graph += f";[base]ass='{_ass_path(ass)}'[v]" if ass else ";[base]null[v]"
+    d = ss if shift_words else 0.0  # слова из редактора уже в секундах готового клипа
+    shifted = [Word(w.start - d, w.end - d, w.text) for w in (words or [])
+               if w.end > d and (t is None or w.start < d + t)]
+    ass = write_ass(shifted, out.with_suffix(".ass"), vw, vh, y=sub_y, hook=title, hook_y=hook_y, font=font,
+                    colors=colors)
+    graph += f";[base]ass='{_ass_path(ass)}':fontsdir='{_ass_path(FONTS_DIR)}'[v]" if ass else ";[base]null[v]"
     cut = (["-ss", f"{ss:.2f}"] if ss else []) + (["-t", f"{t:.2f}"] if t else [])
     p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *cut, "-i", str(src),
                         "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
@@ -374,18 +403,76 @@ def make_horizontal(src: Path, out: Path, height: int, ss: float = 0.0, t: float
     return out
 
 
-def concat(parts: list[Path], out: Path) -> Path | None:
-    """Склейка кусков в один ролик (хайлайты). Куски уже одного размера, звук выравниваем."""
+TRANSITIONS = {"fade": "fade", "slide": "slideleft", "zoom": "zoomin", "wipe": "wipeup", "flash": "fadewhite"}
+
+
+def video_duration(path: Path) -> float:
+    ff = Path(FFMPEG)
+    probe = str(ff.with_name(ff.name.replace("ffmpeg", "ffprobe")))
+    try:
+        p = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                           capture_output=True, text=True, timeout=30)
+        return float(p.stdout.strip())
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0.0
+
+
+def concat(parts: list[Path], out: Path, transition: str = "none", fade: float = 0.4) -> Path | None:
+    """Склейка кусков в один ролик (хайлайты), с переходом между кусками или без.
+    Куски уже одного размера, звук выравниваем."""
     inputs = [x for p in parts for x in ("-i", str(p))]
     n = len(parts)
-    graph = "".join(f"[{i}:v:0]setsar=1[v{i}];[{i}:a:0]aresample=44100[a{i}];" for i in range(n)) + \
-        "".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]"
+    prep = "".join(f"[{i}:v:0]setsar=1,fps=30,format=yuv420p[v{i}];[{i}:a:0]aresample=44100[a{i}];" for i in range(n))
+    kind = TRANSITIONS.get(transition)
+    durs = [video_duration(p) for p in parts] if kind and n > 1 else []
+    if kind and n > 1 and all(d > fade * 2 for d in durs):
+        # xfade: каждый следующий кусок наезжает на конец предыдущего
+        graph, v, a, offset = prep, "v0", "a0", 0.0
+        for i in range(1, n):
+            offset += durs[i - 1] - fade
+            graph += (f"[{v}][v{i}]xfade=transition={kind}:duration={fade}:offset={offset:.3f}[x{i}];"
+                      f"[{a}][a{i}]acrossfade=d={fade}[y{i}];")
+            v, a = f"x{i}", f"y{i}"
+        graph += f"[{v}]null[v];[{a}]anull[a]"
+    else:
+        graph = prep + "".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]"
     p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *inputs, "-filter_complex", graph,
                         "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
                         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)],
                        capture_output=True)
     if p.returncode != 0 or not out.exists():
         log.warning("Не получилось склеить хайлайты: %s", p.stderr.decode(errors="replace")[-300:])
+        return None
+    return out
+
+
+def decorate(src: Path, out: Path, music: Path | None = None, music_volume: float = 0.35,
+             overlay: Path | None = None, overlay_pos: str = "top") -> Path | None:
+    """Своя музыка под клипом и/или своё видео поверх: крупно сверху по центру или маленьким окном в углу."""
+    if not music and not overlay:
+        return None
+    inputs, graph = ["-i", str(src)], []
+    vmap, amap, venc = "0:v", "0:a?", ["-c:v", "copy"]
+    n = 1
+    if overlay:
+        inputs += ["-stream_loop", "-1", "-i", str(overlay)]
+        part, pos = (0.6, "(W-w)/2:H*0.04") if overlay_pos == "top" else (0.34, "W-w-W*0.04:H*0.04")
+        # ширина окна от ширины клипа, высота по пропорциям вставки
+        graph.append(f"[{n}:v][0:v]scale2ref=w=main_w*{part}:h=ow/mdar[ov][base];"
+                     f"[base][ov]overlay={pos}:shortest=1,format=yuv420p[v]")
+        vmap, venc = "[v]", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21"]
+        n += 1
+    if music:
+        inputs += ["-stream_loop", "-1", "-i", str(music)]
+        vol = max(0.0, min(float(music_volume), 1.0))
+        graph.append(f"[{n}:a]volume={vol:.2f}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0[a]")
+        amap = "[a]"
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *inputs, "-filter_complex", ";".join(graph),
+           "-map", vmap, "-map", amap, *venc, "-c:a", "aac", "-b:a", "128k", "-t", f"{video_duration(src):.3f}",
+           "-movflags", "+faststart", str(out)]
+    p = subprocess.run(cmd, capture_output=True)
+    if p.returncode != 0 or not out.exists():
+        log.warning("Не получилось добавить музыку или видео: %s", p.stderr.decode(errors="replace")[-300:])
         return None
     return out
 

@@ -13,6 +13,8 @@ from .config import Config
 from .db import DB
 from .telegram_api import TelegramAPI
 from .push import Push
+from .pipeline.engine import Engine
+from .pipeline.jobs import Jobs
 from .twitch import Twitch
 from .worker import Dispatcher, Manager
 
@@ -37,11 +39,15 @@ async def main() -> None:
     if not twitch.enabled:
         log.info("TWITCH_CLIENT_ID не задан: без поиска стримеров, аватарок и сигнала от клипов зрителей")
     manager = Manager(cfg, db, dispatcher, twitch=twitch)
+    # длинные видео (файл, ссылка, встречи): своя очередь, живые стримы она не трогает
+    uploads = cfg.clips_dir / "uploads"
+    engine = Engine(db, cfg.clips_dir, upload_path=lambda uid, upid: uploads / f"u{uid}_{upid}.mp4")
+    jobs = Jobs(db, engine)
     app = create_app(cfg, db, on_change=manager.poke, status=manager.status, twitch=twitch,
-                     live=manager.worker, telegram=api)
+                     live=manager.worker, telegram=api, on_source=jobs.poke)
     server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")),
                                            log_level="info"))
-    tasks = [asyncio.create_task(server.serve()), asyncio.create_task(manager.run())]
+    tasks = [asyncio.create_task(server.serve()), asyncio.create_task(manager.run()), asyncio.create_task(jobs.run())]
     if api:
         bot = Bot(cfg, db, api)
         bot.on_change = manager.poke

@@ -1,0 +1,35 @@
+{
+  "_comment": "Тарифы HypeCut. Цены предварительные. Чтобы поменять цену, часы, клипы или текст возможностей, правь этот файл (или положи свой и укажи путь в HYPECUT_PRICING) и перезапусти сервер. Приложение рисует страницу тарифов только из этих данных. price_usd/founder_usd — цены на сайте; app_usd/app_founder_usd — в App Store и Google Play (дороже из-за комиссии магазина). Приложение получает только цены магазина, сайт — только свои.",
+  "preliminary": true,
+  "kzt_per_usd": 520,
+  "yearly_discount": null,
+  "founder": {"active": true, "note": "Специальные цены для первых клиентов. Цена сохраняется, пока подписка активна."},
+  "plans": [
+    {"id": "free", "clips_per_stream": 5, "title": "Free", "price_usd": 0, "founder_usd": null, "hours": 2, "ai_clips": 5,
+     "channels": 1, "height": 720, "watermark": true, "priority": false, "max_seconds": 60,
+     "features": ["Базовый редактор и субтитры", "Водяной знак HypeCut", "Экспорт до 720p"]},
+    {"id": "creator", "clips_per_stream": 20, "title": "Creator", "price_usd": 14.99, "founder_usd": 9.99, "app_usd": 17.99, "app_founder_usd": 11.99, "hours": 20, "ai_clips": 100,
+     "channels": 3, "height": 1080, "watermark": false, "priority": false, "max_seconds": 120,
+     "features": ["Без водяного знака", "Экспорт 1080p", "Шаблоны и субтитры", "Доступ к редактору"]},
+    {"id": "pro", "clips_per_stream": 50, "title": "Pro", "price_usd": 29.99, "founder_usd": 19.99, "app_usd": 34.99, "app_founder_usd": 23.99, "hours": 60, "ai_clips": 300,
+     "channels": 3, "height": 1080, "watermark": false, "priority": true, "max_seconds": 120, "best": true,
+     "features": ["Приоритетная обработка", "Расширенные AI-функции", "Несколько брендированных шаблонов", "Аналитика"]},
+    {"id": "agency", "clips_per_stream": 100, "title": "Agency", "price_usd": 99, "founder_usd": 69, "app_usd": 119, "app_founder_usd": 82.99, "hours": 200, "ai_clips": 1000,
+     "channels": 5, "height": 1080, "watermark": false, "priority": true, "max_seconds": 120,
+     "features": ["До 5 каналов", "Несколько пользователей", "Совместная работа", "Брендированные шаблоны и отчёты"]},
+    {"id": "business", "clips_per_stream": null, "title": "Business", "price_usd": null, "founder_usd": null, "hours": null, "ai_clips": null,
+     "channels": 20, "height": 1080, "watermark": false, "priority": true, "max_seconds": 120, "contact": true,
+     "features": ["Большие объёмы обработки", "Zoom, Google Meet, Microsoft Teams", "Обработка конференций и мероприятий", "Командный доступ", "Индивидуальные условия"]}
+  ],
+  "addons": [
+    {"id": "h10", "hours": 10, "price_usd": 5, "app_usd": 5.99},
+    {"id": "h30", "hours": 30, "price_usd": 12, "app_usd": 13.99},
+    {"id": "h100", "hours": 100, "price_usd": 30, "app_usd": 34.99}
+  ],
+  "events": [
+    {"id": "small", "title": "Small", "from_usd": 99, "note": "Митап или воркшоп"},
+    {"id": "business", "title": "Business", "from_usd": 299, "note": "Конференция на один день"},
+    {"id": "professional", "title": "Professional", "from_usd": 599, "note": "Несколько залов или дней"},
+    {"id": "enterprise", "title": "Enterprise", "from_usd": null, "note": "Крупный форум или серия событий"}
+  ]
+}

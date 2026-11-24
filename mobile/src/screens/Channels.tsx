@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Modal, Pressable, TextInput, View } from "react-native";
 import { api, Channel, Found, Me, PlatformId } from "../api";
 import Live from "./Live";
-import { Button, c, Chips, H1, P, PLATFORMS, platformColor, s } from "../ui";
+import { Button, c, Chips, H1, P, platforms, platformColor, s } from "../ui";
 import { L } from "../i18n";
 
 function Avatar({ name, platform, uri, size = 40 }: { name: string; platform: PlatformId; uri?: string | null; size?: number }) {
@@ -25,7 +25,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
   const [watching, setWatching] = useState<Channel | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const limit = me.plan?.channels ?? 0;
-  const hint = PLATFORMS.find((p) => p.id === platform)?.hint ?? "";
+  const hint = platforms().find((p) => p.id === platform)?.hint ?? "";
   const following = new Set(me.channels.map((x) => x.key));
 
   useEffect(() => {
@@ -70,7 +70,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
     onChange();
   }
 
-  const full = limit > 0 && me.channels.length >= limit && me.plan?.id !== "max";
+  const full = limit > 0 && me.channels.length >= limit && me.plan?.id !== "business";
   const suggestions = popular.filter((x) => x.key && !following.has(x.key));
 
   const foundRow = (item: Found, i: number) => (
@@ -102,10 +102,10 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
                 "Any streamer from Twitch, YouTube, Kick, VK Video or TikTok. While they are live, HypeCut watches for you.",
               )}
             </P>
-            <Chips items={PLATFORMS.map((p) => ({ id: p.id, title: p.title }))} value={platform} onChange={setPlatform} />
+            <Chips items={platforms().map((p) => ({ id: p.id, title: p.title }))} value={platform} onChange={setPlatform} />
             <View style={{ flexDirection: "row", gap: 10 }}>
               <TextInput
-                style={[s.input, { flex: 1, borderRadius: 999 }]}
+                style={[s.input, { flex: 1, minWidth: 0, borderRadius: 999 }]}
                 placeholder={platform === "twitch" ? L("Начни вводить ник", "Start typing a name") : hint}
                 placeholderTextColor={c.dim}
                 autoCapitalize="none"
@@ -143,7 +143,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
                 )}
               </View>
             </View>
-            {item.live && <Button title={L("▶ Смотреть", "▶ Watch")} kind="outline" style={{ height: 40 }}
+            {item.live && <Button title={L("▶ Эфир", "▶ Live")} kind="outline" style={{ height: 38, paddingHorizontal: 12 }}
                                   onPress={() => setWatching(item)} />}
             <Button title={item.live ? "✕" : L("Убрать", "Remove")} kind="text" onPress={() => unfollow(item.key)} />
           </View>
@@ -154,9 +154,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
               <Pressable onPress={onUpgrade}
                          style={[s.card, { borderColor: c.accent, backgroundColor: c.accentDim }]}>
                 <P style={{ fontWeight: "700" }}>{L("Нужно больше каналов?", "Need more channels?")}</P>
-                <P dim style={{ fontSize: 13 }}>{me.plan?.id === "pro"
-                  ? L("На Max до 10 стримеров, качество до 2K и клипы длиннее", "Max: up to 10 streamers, up to 2K and longer clips")
-                  : L("На Pro до 6 стримеров и клипы в 1080p", "Pro: up to 6 streamers and 1080p clips")}</P>
+                <P dim style={{ fontSize: 13 }}>{L("На Agency до 5 каналов и 200 ч обработки, на Business — сколько нужно", "Agency: up to 5 channels and 200 h; Business: as many as you need")}</P>
               </Pressable>
             )}
             {!full && suggestions.length > 0 && (

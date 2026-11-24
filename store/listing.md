@@ -9,7 +9,7 @@
 - **Сайт поддержки:** https://ваш-домен/support (или ссылка на бота: https://t.me/HypeCut_bot)
 - **Политика конфиденциальности:** https://ваш-домен/privacy
 - **Условия использования:** https://ваш-домен/terms
-- **Подписки:** `hypecut_standard_monthly` ($9.99), `hypecut_pro_monthly` ($19.99), `hypecut_max_monthly` ($49.99), пробный период 7 дней
+- **Подписки:** `hypecut_standard_monthly` ($10), `hypecut_pro_monthly` ($20), `hypecut_max_monthly` ($50), пробный период 3 дня
 
 ## Русский
 
@@ -42,10 +42,10 @@ HypeCut смотрит стримы за тебя и присылает лучш
 • Скачать клип в галерею или поделиться одной кнопкой
 
 ТАРИФЫ
-• Пробный: 7 дней бесплатно, 1 канал, до 5 клипов за стрим
-• Standard: 720p, 3 канала, до 20 клипов за стрим, вертикальные клипы с субтитрами
-• Pro: 1080p, 6 каналов, до 100 клипов за стрим, первыми в очереди
-• Max: до 2K, 10 каналов, до 200 клипов за стрим, клипы длиннее
+• Пробный: 3 дня бесплатно, 1 канал, до 5 клипов за стрим
+• Standard: 720p, 3 канала, до 20 клипов за стрим, клип до 1 минуты, вертикаль с субтитрами и монтаж
+• Pro: 1080p, 5 каналов, до 50 клипов за стрим, клип до 1,5 минуты, первыми в очереди
+• Max: 2K (1440p), 10 каналов, до 100 клипов за стрим, клип до 2 минут
 
 Подписка продлевается автоматически. Отменить можно в любой момент в настройках App Store или Google Play.
 
@@ -86,10 +86,10 @@ FEATURES
 • Save a clip to your gallery or share it with one tap
 
 PLANS
-• Trial: 7 days free, 1 channel, up to 5 clips per stream
-• Standard: 720p, 3 channels, up to 20 clips per stream, vertical clips with captions
-• Pro: 1080p, 6 channels, up to 100 clips per stream, priority processing
-• Max: up to 2K, 10 channels, up to 200 clips per stream, longer clips
+• Trial: 3 days free, 1 channel, up to 5 clips per stream
+• Standard: 720p, 3 channels, up to 20 clips per stream, clips up to 1 minute, vertical with captions and editor
+• Pro: 1080p, 5 channels, up to 50 clips per stream, clips up to 1.5 minutes, priority processing
+• Max: 2K (1440p), 10 channels, up to 100 clips per stream, clips up to 2 minutes
 
 Subscriptions renew automatically. Cancel any time in App Store or Google Play settings.
 

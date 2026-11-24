@@ -2,11 +2,12 @@
 import { Image } from "expo-image";
 import React, { useState } from "react";
 import { Alert, ScrollView, Switch, TextInput, View } from "react-native";
-import { api, Me, Rendered, withToken } from "../api";
+import { api, Me, Rendered, Style, withToken } from "../api";
 import { reel, useReel } from "../highlights";
 import { L } from "../i18n";
 import { Button, c, Chips, P, s } from "../ui";
 import { Result } from "./Editor";
+import StylePanel, { transitions } from "./StylePanel";
 
 export default function Highlights({ me, onClose }: { me: Me | null; onClose: () => void }) {
   const items = useReel();
@@ -16,12 +17,15 @@ export default function Highlights({ me, onClose }: { me: Me | null; onClose: ()
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Rendered | null>(null);
+  const [style, setStyle] = useState<Style>({ font: "classic", music_volume: 0.35, overlay_pos: "top" });
+  const [transition, setTransition] = useState("fade");
   const total = items.reduce((a, x) => a + (x.end - x.start), 0);
 
   async function build() {
     setBusy(true);
     try {
-      setDone(await api.highlights(items.map(({ clip, start, end }) => ({ clip, start, end })), vertical, subtitles, title));
+      setDone(await api.highlights(items.map(({ clip, start, end }) => ({ clip, start, end })), vertical, subtitles, title,
+                                     { ...style, transition }));
     } catch (e: any) {
       Alert.alert(L("Не получилось склеить", "Could not build"), String(e?.message ?? e));
     } finally {
@@ -61,7 +65,7 @@ export default function Highlights({ me, onClose }: { me: Me | null; onClose: ()
             items={[{ id: "v", title: L("9:16 вебка + игра", "9:16 cam + game") }, { id: "h", title: "16:9" }]}
             value={vertical ? "v" : "h"}
             onChange={(v) => (v === "v" && !canVertical
-              ? Alert.alert(L("Вертикальные клипы есть на Standard и выше", "Vertical clips are on Standard and above"))
+              ? Alert.alert(L("Вертикальные клипы есть на Creator и выше", "Vertical clips are on Creator and above"))
               : setVertical(v === "v"))}
           />
           {vertical && (
@@ -74,6 +78,11 @@ export default function Highlights({ me, onClose }: { me: Me | null; onClose: ()
               </View>
             </>
           )}
+          <View style={{ gap: 8 }}>
+            <P style={{ fontWeight: "700" }}>{L("Переход между моментами", "Transition between moments")}</P>
+            <Chips items={transitions()} value={transition} onChange={setTransition} />
+          </View>
+          <StylePanel value={style} onChange={setStyle} vertical={vertical} />
           <Button title={L("Склеить ролик", "Build video")} busy={busy} disabled={!items.length} onPress={build} />
           <Button kind="text" title={L("Очистить", "Clear")} onPress={() => { reel.clear(); onClose(); }} />
         </ScrollView>

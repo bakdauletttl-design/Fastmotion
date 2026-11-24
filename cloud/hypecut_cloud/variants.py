@@ -22,16 +22,32 @@ class Want:
     height: int
     long: bool
     vertical: bool
+    watermark: bool = False  # тариф Free: надпись HypeCut в углу
 
 
 def want_for(plan: Plan, clip, vertical: bool | None = None) -> Want:
     src_h = clip["height"] or plan.height
     return Want(min(plan.height, src_h), plan.long_clips,
-                plan.vertical if vertical is None else (vertical and plan.vertical))
+                plan.vertical if vertical is None else (vertical and plan.vertical), plan.watermark)
 
 
 def name_for(clip_id: str, w: Want) -> str:
-    return f"{clip_id}.v{w.height}{'L' if w.long else ''}{'_9x16' if w.vertical else ''}.mp4"
+    return f"{clip_id}.v{w.height}{'L' if w.long else ''}{'_9x16' if w.vertical else ''}{'W' if w.watermark else ''}.mp4"
+
+
+def add_watermark(path: Path) -> Path | None:
+    """Надпись HypeCut в правом нижнем углу (тариф Free)."""
+    import subprocess
+    tmp = path.with_suffix(".wm.mp4")
+    r = subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(path), "-vf",
+                        "drawtext=text='HypeCut':fontcolor=white@0.75:fontsize=h/28:x=w-tw-h/40:y=h-th-h/40:"
+                        "shadowcolor=black@0.5:shadowx=2:shadowy=2", "-c:a", "copy", str(tmp)], capture_output=True)
+    if r.returncode != 0:
+        log.warning("Водяной знак не добавился: %s", r.stderr[-200:])
+        tmp.unlink(missing_ok=True)
+        return path
+    tmp.replace(path)
+    return path
 
 
 def lengths(clip, long: bool) -> tuple[float, float | None]:
@@ -56,6 +72,15 @@ def moment_for(clip, long: bool) -> float | None:
 
 def path_for(clips_dir: Path, clip, w: Want) -> Path | None:
     """Готовый файл нужной версии; делает его, если ещё нет. None, если исходник уже удалён."""
+    if w.watermark:
+        out = clips_dir / name_for(clip["id"], w)
+        if out.exists():
+            return out
+        base = path_for(clips_dir, clip, Want(w.height, w.long, w.vertical))
+        if base is None:
+            return None
+        shutil.copyfile(base, out)
+        return add_watermark(out)
     src = clips_dir / clip["file"]
     out = clips_dir / name_for(clip["id"], w)
     if out.exists():
@@ -78,7 +103,7 @@ def for_telegram(clips_dir: Path, clip, w: Want) -> tuple[Path | None, Want]:
     for h in sorted({w.height, 1080, 720}, reverse=True):
         if h > w.height:
             continue
-        cand = Want(h, w.long, w.vertical)
+        cand = Want(h, w.long, w.vertical, w.watermark)
         p = path_for(clips_dir, clip, cand)
         if p and p.stat().st_size <= TG_LIMIT:
             return p, cand

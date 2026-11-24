@@ -58,7 +58,7 @@ export default function Live({ channel, me, onClose }: { channel: Channel; me: M
     }
   };
 
-  const lengths = [15, 30, 60, 90].filter((x) => !info || x <= info.max_seconds);
+  const lengths = [15, 30, 60, 90, 120].filter((x) => !info || x <= info.max_seconds);
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: 60, paddingHorizontal: 20, paddingBottom: 32 }}>
