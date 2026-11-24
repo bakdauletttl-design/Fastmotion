@@ -65,7 +65,7 @@ export default function Highlights({ me, onClose }: { me: Me | null; onClose: ()
             items={[{ id: "v", title: L("9:16 вебка + игра", "9:16 cam + game") }, { id: "h", title: "16:9" }]}
             value={vertical ? "v" : "h"}
             onChange={(v) => (v === "v" && !canVertical
-              ? Alert.alert(L("Вертикальные клипы есть на Standard и выше", "Vertical clips are on Standard and above"))
+              ? Alert.alert(L("Вертикальные клипы есть на Creator и выше", "Vertical clips are on Creator and above"))
               : setVertical(v === "v"))}
           />
           {vertical && (

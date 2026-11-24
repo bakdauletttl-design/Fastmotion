@@ -1,13 +1,14 @@
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, FlatList, Modal, Pressable, RefreshControl, Share, View } from "react-native";
+import { Alert, FlatList, Modal, Platform, Pressable, RefreshControl, Share, View } from "react-native";
 import { api, Clip, Me, withToken } from "../api";
 import { useReel } from "../highlights";
 import { saveToGallery as download } from "../save";
 import Editor from "./Editor";
 import Highlights from "./Highlights";
-import { Button, c, Chips, H1, P, s, Tag } from "../ui";
+import Scrub, { justScrubbed } from "./Scrub";
+import { Button, c, Chips, H1, Icon, P, s, Tag } from "../ui";
 import { L, locale } from "../i18n";
 
 const kinds = (): Record<string, string> => ({
@@ -25,6 +26,11 @@ function shortReason(clip: Clip): string {
   return m ? `${KIND[clip.kind] ?? KIND.manual} x${Math.round(Number(m[1]))}` : KIND[clip.kind] ?? KIND.manual;
 }
 
+/** Время эфира: 1:23:45 */
+export const streamClock = (t: number) => {
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = Math.floor(t % 60);
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+};
 const time = (t: number) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`;
 
 function Player({ clip, onClose, onEdit }: { clip: Clip; onClose: () => void; onEdit: () => void }) {
@@ -65,16 +71,16 @@ function Player({ clip, onClose, onEdit }: { clip: Clip; onClose: () => void; on
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: 60, paddingHorizontal: 20, paddingBottom: 40 }}>
+    <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: Platform.OS === "web" ? 12 : 56, paddingHorizontal: 16, paddingBottom: Platform.OS === "web" ? 12 : 34 }}>
       <View style={[s.row, { marginBottom: 14 }]}>
         <View style={{ flex: 1 }}>
           <P style={{ fontWeight: "700", fontSize: 17 }} numberOfLines={2}>{clip.title ?? clip.channel}</P>
           <P dim style={{ fontSize: 13 }}>{clip.title ? `${clip.channel} · ` : ""}{clip.platform_title} · {clip.reason}</P>
         </View>
-        <Button title={L("Закрыть", "Close")} kind="text" onPress={onClose} />
+        <Pressable hitSlop={10} onPress={onClose}><Icon name="close" size={26} /></Pressable>
       </View>
-      <View style={{ flex: 1, borderRadius: 24, overflow: "hidden", backgroundColor: c.card }}>
-        <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls />
+      <View style={{ flex: 1, maxHeight: vertical ? 560 : 260, borderRadius: 12, overflow: "hidden", backgroundColor: "#000" }}>
+        <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls playsInline />
         {clip.messages.length > 0 && (
           <View pointerEvents="none" style={{ position: "absolute", left: 12, right: 12, bottom: 56, gap: 6 }}>
             {clip.messages.slice(-3).map((m, i) => (
@@ -94,28 +100,39 @@ function Player({ clip, onClose, onEdit }: { clip: Clip; onClose: () => void; on
         />
         <View style={{ flex: 1 }} />
         <Pressable onPress={toggleFav}
-                   style={{ width: 40, height: 34, borderRadius: 999, alignItems: "center", justifyContent: "center",
-                            backgroundColor: fav ? "rgba(255,90,90,0.15)" : c.card, borderWidth: 1, borderColor: fav ? c.danger : c.line }}>
-          <P>{fav ? "❤️" : "🤍"}</P>
+                   style={{ width: 40, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: c.raised }}>
+          <Icon name={fav ? "heart" : "heart-outline"} size={19} color={fav ? "#FF4D6D" : c.fg} />
         </Pressable>
         {[1, -1].map((v) => (
           <Pressable key={v} onPress={() => rate(v)}
-                     style={{ width: 40, height: 34, borderRadius: 999, alignItems: "center", justifyContent: "center",
-                              backgroundColor: rating === v ? c.accentDim : c.card,
-                              borderWidth: 1, borderColor: rating === v ? c.accent : c.line }}>
-            <P>{v > 0 ? "👍" : "👎"}</P>
+                     style={{ width: 40, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center",
+                              backgroundColor: rating === v ? c.accentDim : c.raised }}>
+            <Icon name={v > 0 ? (rating === v ? "thumbs-up" : "thumbs-up-outline") : (rating === v ? "thumbs-down" : "thumbs-down-outline")}
+                  size={18} color={rating === v ? c.accent : c.fg} />
           </Pressable>
         ))}
       </View>
       <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
         {clip.quality ? <Tag>{clip.quality >= 1440 ? "2K" : `${clip.quality}p`}</Tag> : null}
         {clip.moment != null && <Tag>{L("момент на", "moment at")} {time(clip.moment)}</Tag>}
+        {clip.stream_at != null && <Tag>{clip.source_id ? L("видео", "video", "видео") : L("эфир", "stream", "эфир")} {streamClock(clip.stream_at)}</Tag>}
       </View>
+      {(clip.quote || clip.signals?.length) ? (
+        <View style={{ backgroundColor: c.raised, borderRadius: 12, padding: 12, gap: 6, marginTop: 10 }}>
+          <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+            <Icon name="sparkles" size={14} color={c.accent} />
+            <P style={{ fontSize: 13, fontWeight: "700" }}>{L("Почему AI выбрал этот момент", "Why AI picked this moment", "AI неге таңдады")}</P>
+          </View>
+          {clip.quote ? <P style={{ fontSize: 14, fontStyle: "italic" }}>«{clip.quote}»</P> : null}
+          <P dim style={{ fontSize: 12 }}>{[clip.speaker, clip.emotion, ...(clip.signals ?? [])].filter(Boolean).join(" · ")}</P>
+        </View>
+      ) : null}
       <View style={{ flexDirection: "row", gap: 12, marginTop: 16 }}>
-        <Button style={{ flex: 1 }} kind="outline" title={L("Скачать", "Save")} busy={saving} onPress={save} />
-        <Button style={{ flex: 1 }} kind="outline" title={L("Поделиться", "Share")} onPress={() => Share.share({ url, message: url })} />
+        <Button style={{ flex: 1 }} kind="outline" icon="download-outline" title={L("Скачать", "Save")} busy={saving} onPress={save} />
+        <Button style={{ flex: 1 }} kind="outline" icon="share-outline" title={L("Поделиться", "Share")} onPress={() => Share.share({ url, message: url })} />
       </View>
-      <Button style={{ marginTop: 10 }} title={L("✂️ Монтаж", "✂️ Edit")} onPress={onEdit} />
+      <Button style={{ marginTop: 10 }} icon="cut-outline" title={L("Монтаж", "Edit")} onPress={onEdit} />
+      <View style={{ flex: 0.01 }} />
     </View>
   );
 }
@@ -148,9 +165,15 @@ export default function Clips({ me }: { me: Me | null }) {
   const channels = useMemo(() => {
     const keys: { id: string; title: string }[] = [];
     for (const cl of clips) if (!keys.find((k) => k.id === cl.channel_key)) keys.push({ id: cl.channel_key, title: cl.channel });
-    return [{ id: "all", title: L("Все", "All") }, { id: "fav", title: "❤️" }, ...keys];
+    // по источнику: стримы, видео (файл и ссылка), встречи
+    const kinds = [{ id: "k:live", title: L("Стримы", "Streams", "Стримдер") }];
+    if (clips.some((x) => x.source_kind === "upload" || x.source_kind === "url" || x.source_kind === "event")) kinds.push({ id: "k:video", title: L("Видео", "Videos", "Видео") });
+    if (clips.some((x) => x.source_kind === "meeting")) kinds.push({ id: "k:meeting", title: L("Встречи", "Meetings", "Кездесулер") });
+    return [{ id: "all", title: L("Все", "All") }, { id: "fav", title: L("Любимые", "Favorites") }, ...(kinds.length > 1 ? kinds : []), ...keys];
   }, [clips]);
-  const shown = filter === "all" ? clips : filter === "fav" ? clips.filter((x) => x.fav) : clips.filter((x) => x.channel_key === filter);
+  const kindOf = (x: Clip) => (!x.source_kind || x.source_kind === "live" ? "live" : x.source_kind === "meeting" ? "meeting" : "video");
+  const shown = filter === "all" ? clips : filter === "fav" ? clips.filter((x) => x.fav)
+    : filter.startsWith("k:") ? clips.filter((x) => kindOf(x) === filter.slice(2)) : clips.filter((x) => x.channel_key === filter);
 
   function toggleFav(x: Clip) {
     x.fav = !x.fav;
@@ -164,9 +187,7 @@ export default function Clips({ me }: { me: Me | null }) {
       <FlatList
         data={shown}
         keyExtractor={(x) => x.id}
-        numColumns={2}
-        columnWrapperStyle={{ gap: 12 }}
-        contentContainerStyle={{ gap: 12, paddingBottom: 24 }}
+        contentContainerStyle={{ gap: 14, paddingBottom: 24 }}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
         ListHeaderComponent={
           <View style={{ gap: 10 }}>
@@ -175,10 +196,16 @@ export default function Clips({ me }: { me: Me | null }) {
               {fresh > 0 && <Tag>+{fresh} {L("НОВЫХ", "NEW")}</Tag>}
             </View>
             {clips.length > 0 && <Chips items={channels} value={filter} onChange={setFilter} />}
+            {clips.length > 0 && (
+              <P dim style={{ fontSize: 12 }}>
+                {L("Веди пальцем по превью, чтобы посмотреть клип без открытия.", "Slide your finger over a preview to skim the clip.",
+                   "Клипті ашпай көру үшін превью бойымен саусақпен жүргіз.")}
+              </P>
+            )}
             {moments.length > 0 && (
               <Pressable onPress={() => setReelOpen(true)}
                          style={[s.card, s.row, { borderColor: c.accent, backgroundColor: c.accentDim, paddingVertical: 12 }]}>
-                <P style={{ fontWeight: "700" }}>🎬 {L("Хайлайты", "Highlights")}: {moments.length}</P>
+                <P style={{ fontWeight: "700" }}>{L("Хайлайты", "Highlights")}: {moments.length}</P>
                 <P style={{ color: c.accent, fontWeight: "700" }}>{L("Склеить", "Build")} ›</P>
               </Pressable>
             )}
@@ -196,27 +223,42 @@ export default function Clips({ me }: { me: Me | null }) {
           </View>
         }
         renderItem={({ item }) => (
-          <Pressable onPress={() => setOpen(item)} style={{ flex: 1 }}>
-            <View style={{ aspectRatio: 9 / 12, borderRadius: 18, overflow: "hidden", backgroundColor: c.card }}>
-              {item.thumb && <Image source={{ uri: withToken(item.thumb) }} style={{ flex: 1 }} contentFit="cover" />}
-              <View style={{ position: "absolute", top: 9, left: 9 }}>
-                <Tag>{shortReason(item)}</Tag>
-              </View>
-              <Pressable onPress={() => toggleFav(item)} hitSlop={8}
-                         style={{ position: "absolute", top: 6, right: 6, width: 32, height: 32, borderRadius: 16,
-                                  alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.45)" }}>
-                <P style={{ fontSize: 15 }}>{item.fav ? "❤️" : "🤍"}</P>
-              </Pressable>
-              <View style={{ position: "absolute", right: 9, bottom: 9, backgroundColor: "rgba(0,0,0,0.55)",
-                             borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 }}>
-                <P style={{ fontSize: 12, fontWeight: "700" }}>{time(item.duration)}</P>
+          <Pressable onPress={() => !justScrubbed() && setOpen(item)} style={{ flexDirection: "row", gap: 12 }}>
+            <View style={{ width: "48%" }}>
+              <Scrub clip={item}>
+                <View style={{ position: "absolute", top: 6, left: 6, backgroundColor: "rgba(0,0,0,0.7)", borderRadius: 6 }}>
+                  <Tag>{shortReason(item)}</Tag>
+                </View>
+                <View style={{ position: "absolute", right: 6, bottom: 8, backgroundColor: "rgba(0,0,0,0.6)", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+                  <P style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{time(item.source_duration ?? item.duration)}</P>
+                </View>
+              </Scrub>
+            </View>
+            <View style={{ flex: 1, gap: 3 }}>
+              <P style={{ fontWeight: "700", fontSize: 14, lineHeight: 18 }} numberOfLines={2}>{item.title ?? item.channel}</P>
+              <P dim style={{ fontSize: 12 }} numberOfLines={1}>{item.channel} · {item.platform_title}</P>
+              {item.stream_at != null && (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Icon name={item.source_id ? "play-circle-outline" : "radio-outline"} size={13} color={c.accent} />
+                  <P style={{ fontSize: 12, color: c.accent, fontWeight: "600" }} numberOfLines={1}>
+                    {item.source_id
+                      ? `${L("на", "at", "видеоның")} ${streamClock(item.stream_at)} ${L("видео", "of the video", "сәтінде")}${item.speaker ? ` · ${item.speaker}` : ""}`
+                      : `${L("на", "at", "эфирдің")} ${streamClock(item.stream_at)} ${L("эфира", "of the stream", "сәтінде")}`}
+                  </P>
+                </View>
+              )}
+              <P dim style={{ fontSize: 12 }} numberOfLines={1}>
+                {new Date(item.created * 1000).toLocaleString(locale(), { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </P>
+              <View style={{ flexDirection: "row", gap: 14, marginTop: "auto" }}>
+                <Pressable onPress={() => toggleFav(item)} hitSlop={8}>
+                  <Icon name={item.fav ? "heart" : "heart-outline"} size={20} color={item.fav ? "#FF4D6D" : c.dim} />
+                </Pressable>
+                <Pressable onPress={() => setEditing(item)} hitSlop={8}>
+                  <Icon name="cut-outline" size={20} color={c.dim} />
+                </Pressable>
               </View>
             </View>
-            <P style={{ fontWeight: "700", marginTop: 8 }} numberOfLines={2}>{item.title ?? item.channel}</P>
-            <P dim style={{ fontSize: 13 }} numberOfLines={1}>
-              {item.title ? `${item.channel} · ` : `${item.platform_title} · `}
-              {new Date(item.created * 1000).toLocaleString(locale(), { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-            </P>
           </Pressable>
         )}
       />

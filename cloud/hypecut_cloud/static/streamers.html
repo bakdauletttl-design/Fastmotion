@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HypeCut для стримеров</title>
+<style>
+body{margin:0;background:#07080A;color:#F4F6F3;font:16px/1.6 Inter,system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:40px max(16px,env(safe-area-inset-left))}
+h1{font-size:32px;line-height:1.15}h2{font-size:20px;margin-top:32px}a{color:#2EE59D}p,li{color:#C9CFCB}
+.card{background:#111316;border-radius:16px;padding:18px;margin:16px 0}
+label{display:block;margin:14px 0 6px;font-weight:600}
+input,textarea{width:100%;box-sizing:border-box;background:#1A1D21;border:1px solid #2A2E33;border-radius:10px;color:#F4F6F3;font:inherit;padding:12px}
+button{margin-top:18px;width:100%;height:50px;border:0;border-radius:12px;background:#2EE59D;color:#04150D;font:600 16px Inter,system-ui,sans-serif;cursor:pointer}
+button:disabled{opacity:.6}.ok{color:#2EE59D}.err{color:#FF5A5A}.check{display:flex;gap:10px;align-items:flex-start;font-weight:400}
+.check input{width:auto;margin-top:5px}
+</style></head><body><main>
+<h1>Для стримеров</h1>
+<p>HypeCut помогает зрителям и клиперам находить лучшие моменты ваших эфиров. Мы понимаем, что это ваш контент. Поэтому вот как мы работаем и как отказаться.</p>
+
+<div class="card">
+<h2 style="margin-top:0">Как мы работаем с вашим каналом</h2>
+<ul>
+<li>Сам HypeCut ничего не публикует. Клипы приходят только лично тому, кто их сделал: в приложение и в личные сообщения бота.</li>
+<li>В «Сообщество» HypeCut клип с вашего эфира можно выложить только с отметкой, что вы разрешили, и с подписью вашего канала. Нажмите флажок «Это мой контент» на любом таком ролике, и он сразу скроется до проверки.</li>
+<li>Мы не продаём ваши клипы и не выдаём себя за ваших официальных клиперов.</li>
+<li>Тех, кто публикует клипы, мы просим указывать автора и соблюдать правила площадок.</li>
+<li>Записи эфиров хранятся на сервере несколько дней, потом удаляются.</li>
+</ul>
+</div>
+
+<h2>Не хотите, чтобы ваш канал нарезали?</h2>
+<p>Оставьте заявку. Мы проверим, что канал ваш, и перестанем делать клипы с него для всех пользователей. Сохранённые у нас клипы и ролики с вашим каналом в «Сообществе» тоже удалим.</p>
+<form id="f" class="card">
+<label for="channel">Ссылка на канал</label>
+<input id="channel" name="channel" required placeholder="twitch.tv/ваш_ник или youtube.com/@канал" maxlength="200">
+<label for="contact">Как с вами связаться</label>
+<input id="contact" name="contact" required placeholder="Telegram @ник или почта" maxlength="200">
+<label for="text">Комментарий (необязательно)</label>
+<textarea id="text" name="text" rows="3" maxlength="1000" placeholder="Например: удалите все клипы с моего канала"></textarea>
+<label class="check"><input type="checkbox" id="owner" required> Я владелец этого канала или его представитель</label>
+<button id="b" type="submit">Отправить заявку</button>
+<p id="msg"></p>
+</form>
+<p>Чтобы подтвердить, что канал ваш, мы можем попросить написать нам с почты или аккаунта, указанного на канале. Ещё можно временно добавить короткий код в описание канала.</p>
+
+<h2>Хотите, наоборот, больше клипов?</h2>
+<p>Подключите HypeCut к своему каналу: клипы с лучшими моментами будут приходить вам сразу после эфира, и вы сами решите, что выложить. Приложение HypeCut, раздел «Эфир».</p>
+
+<p style="margin-top:40px"><a href="/terms">Правила HypeCut</a> · <a href="/privacy">Конфиденциальность</a> · <a href="https://t.me/HypeCut_bot">@HypeCut_bot</a></p>
+
+<hr style="border:0;border-top:1px solid #222;margin:40px 0">
+<h1>For streamers</h1>
+<p>HypeCut itself never publishes your clips: they are delivered privately to the person who made them. Users may post a clip of your stream to the HypeCut Community only marked as allowed by you and credited to your channel; tap the flag "This is my content" to hide it immediately. We do not sell clips or pose as your official clippers, and stream recordings are deleted after a few days. To stop all clipping of your channel, submit the form above; we will verify ownership, stop clipping for every user and delete stored clips.</p>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const b = document.getElementById('b'), msg = document.getElementById('msg');
+  b.disabled = true; msg.textContent = ''; msg.className = '';
+  try {
+    const r = await fetch('/streamers/request', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({channel: channel.value, contact: contact.value, text: text.value, owner: owner.checked})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || 'Не получилось отправить, попробуйте ещё раз');
+    msg.className = 'ok'; msg.textContent = 'Заявка отправлена. Мы свяжемся с вами для подтверждения.';
+    e.target.reset();
+  } catch (err) { msg.className = 'err'; msg.textContent = err.message; }
+  b.disabled = false;
+});
+</script>
+</main></body></html>

@@ -70,7 +70,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
     onChange();
   }
 
-  const full = limit > 0 && me.channels.length >= limit && me.plan?.id !== "max";
+  const full = limit > 0 && me.channels.length >= limit && me.plan?.id !== "business";
   const suggestions = popular.filter((x) => x.key && !following.has(x.key));
 
   const foundRow = (item: Found, i: number) => (
@@ -154,9 +154,7 @@ export default function Channels({ me, onChange, onUpgrade }: { me: Me; onChange
               <Pressable onPress={onUpgrade}
                          style={[s.card, { borderColor: c.accent, backgroundColor: c.accentDim }]}>
                 <P style={{ fontWeight: "700" }}>{L("Нужно больше каналов?", "Need more channels?")}</P>
-                <P dim style={{ fontSize: 13 }}>{me.plan?.id === "pro"
-                  ? L("На Max до 10 стримеров, качество до 2K и клипы длиннее", "Max: up to 10 streamers, up to 2K and longer clips")
-                  : L("На Pro до 5 стримеров и клипы в 1080p", "Pro: up to 5 streamers and 1080p clips")}</P>
+                <P dim style={{ fontSize: 13 }}>{L("На Agency до 5 каналов и 200 ч обработки, на Business — сколько нужно", "Agency: up to 5 channels and 200 h; Business: as many as you need")}</P>
               </Pressable>
             )}
             {!full && suggestions.length > 0 && (

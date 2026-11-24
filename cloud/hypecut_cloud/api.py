@@ -13,13 +13,16 @@ from typing import Callable
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pathlib import Path
 
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from . import auth, enhance, variants
 from .config import Config
 from .db import DB, normalize_channel
-from .plans import PLANS, plan_from_product
+from .pipeline import meetings
+from .pipeline.connectors import CONNECTORS, SourceError, check_url, platform_of
+from .pipeline.scenarios import SCENARIOS
+from .plans import PLANS, addon, long_video_plan, plan_from_product, pricing_public
 from .sources import PLATFORMS, from_key
 from .twitch import POPULAR, Twitch
 
@@ -125,6 +128,43 @@ class SendIn(BaseModel):
     edit: str | None = None        # id смонтированной версии из /edit; None: обычная версия клипа
 
 
+class SourceIn(BaseModel):
+    """Длинное видео: файл (upload), ссылка (url), запись встречи (meeting) или мероприятие (event)."""
+    kind: str
+    scenario: str = "auto"
+    platform: str | None = None    # для встречи: zoom | meet | teams
+    title: str | None = None
+    url: str | None = None
+    upload: str | None = None      # id из /uploads?kind=source
+    recording: str | None = None   # id записи встречи
+    rights: bool = False           # «это моё видео, или у меня есть право его использовать»
+
+
+class ReviewIn(BaseModel):
+    status: str                    # approved | rejected | pending
+
+
+class PlanIn(BaseModel):
+    id: str
+    period: str = "month"          # month | year
+
+
+class HoursIn(BaseModel):
+    id: str
+
+
+class QuoteIn(BaseModel):
+    kind: str                      # business | event
+    text: str
+
+
+class OptOutIn(BaseModel):
+    channel: str
+    contact: str
+    text: str = ""
+    owner: bool = False
+
+
 class ChannelIn(BaseModel):
     channel: str
     platform: str | None = None  # для ника без ссылки: twitch | youtube | kick | vk | tiktok
@@ -132,7 +172,8 @@ class ChannelIn(BaseModel):
 
 def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None,
                status: Callable[[str], dict] | None = None, twitch: Twitch | None = None,
-               live: Callable[[str], object] | None = None, telegram=None) -> FastAPI:
+               live: Callable[[str], object] | None = None, telegram=None,
+               on_source: Callable[[], None] = lambda: None) -> FastAPI:
     """live(key) отдаёт воркер канала (запись эфира), telegram: клиент бота для отправки клипов."""
     app = FastAPI(title="HypeCut Cloud", version="0.1")
     twitch = twitch or Twitch()
@@ -229,6 +270,28 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
     def terms():
         return FileResponse(static / "terms.html", media_type="text/html")
 
+    @app.get("/streamers", include_in_schema=False)
+    def streamers():
+        return FileResponse(static / "streamers.html", media_type="text/html")
+
+    optout_times: list[float] = []
+
+    @app.post("/streamers/request")
+    def streamer_request(body: OptOutIn):
+        """Стример просит больше не нарезать его канал. Владелец сервиса проверяет и блокирует через /admin/block."""
+        ch = normalize_channel(body.channel)
+        if not ch:
+            raise HTTPException(400, "Не похоже на канал. Пример: twitch.tv/имя или youtube.com/@имя")
+        if not body.owner or len(body.contact.strip()) < 3:
+            raise HTTPException(400, "Укажите, как с вами связаться, и подтвердите, что канал ваш")
+        now = time.time()
+        optout_times[:] = [t for t in optout_times if t > now - 3600]
+        if len(optout_times) > 50:  # защита от спама
+            raise HTTPException(429, "Слишком много заявок, попробуйте через час")
+        optout_times.append(now)
+        db.add_optout(ch, body.contact.strip()[:200], body.text.strip()[:1000])
+        return {"ok": True, "channel": ch}
+
     @app.get("/plans")
     def plans():
         return [p.public() for p in PLANS.values()]
@@ -321,11 +384,24 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         return channels_of(user["id"])
 
     # ---------- клипы ----------
+    PLATFORM_TITLE = {"file": "Видео", "youtube": "YouTube", "vimeo": "Vimeo", "link": "Ссылка", "zoom": "Zoom",
+                      "meet": "Google Meet", "teams": "Microsoft Teams"}
+
     def clip_dict(c, plan, rated: dict[str, int], favs: set[str] = frozenset()) -> dict:
         base = f"{cfg.public_url}/clips/{c['id']}"
-        src = from_key(c["channel"])
-        return {"id": c["id"], "channel": src.name.lstrip("@"), "platform": src.platform,
-                "platform_title": src.title, "channel_key": c["channel"], "reason": c["reason"], "kind": c["kind"],
+        keys = c.keys()
+        if c["channel"].startswith("src:"):  # клип из длинного видео
+            srow = db.source(c["channel"][4:])
+            platform = (srow["platform"] if srow else None) or "file"
+            name, ptitle, skind = (srow["title"] if srow else None) or "Видео", PLATFORM_TITLE.get(platform, platform), srow["kind"] if srow else None
+        else:
+            src = from_key(c["channel"])
+            name, platform, ptitle, skind = src.name.lstrip("@"), src.platform, src.title, None
+        extra = {k: c[k] for k in ("status", "score", "speaker", "quote", "emotion", "stream_at", "scenario", "source_id") if k in keys}
+        extra["signals"] = json.loads(c["signals"]) if "signals" in keys and c["signals"] else []
+        extra["source_kind"] = skind
+        return {**extra, "id": c["id"], "channel": name, "platform": platform,
+                "platform_title": ptitle, "channel_key": c["channel"], "reason": c["reason"], "kind": c["kind"],
                 "title": c["title"], "rating": rated.get(c["id"], 0), "fav": c["id"] in favs,
                 "words": json.loads(c["words"] or "[]"),
                 "created": c["created"], "duration": variants.duration_for(c, plan.long_clips),
@@ -442,12 +518,13 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         return c
 
     up_dir = cfg.clips_dir / "uploads"
-    UP_KINDS = {"audio": ("m4a", 20 * 1024 * 1024), "video": ("mp4", 60 * 1024 * 1024)}
+    UP_KINDS = {"audio": ("m4a", 20 * 1024 * 1024), "video": ("mp4", 60 * 1024 * 1024),
+                "source": ("mp4", 8 * 1024 ** 3)}  # длинное видео для «Создать клипы»: пишется сразу на диск
 
     def upload_path(uid: int, upid: str | None) -> Path | None:
         if not upid:
             return None
-        m = re.fullmatch(r"(audio|video)_[0-9a-f]{12}", upid)
+        m = re.fullmatch(r"(audio|video|source)_[0-9a-f]{12}", upid)
         path = up_dir / f"u{uid}_{upid}.{UP_KINDS[m.group(1)][0] if m else 'x'}"
         if not m or not path.exists():
             raise HTTPException(404, "Файл не найден, загрузи его ещё раз")
@@ -459,6 +536,24 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         if kind not in UP_KINDS:
             raise HTTPException(400, "Можно загрузить только музыку или видео")
         ext, limit = UP_KINDS[kind]
+        if kind == "source":
+            up_dir.mkdir(parents=True, exist_ok=True)
+            seed = "%s:%s" % (user["id"], time.time())
+            upid = "source_" + hashlib.sha1(seed.encode()).hexdigest()[:12]
+            path = up_dir / f"u{user['id']}_{upid}.{ext}"
+            size = 0
+            with path.open("wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > limit:
+                        f.close()
+                        path.unlink(missing_ok=True)
+                        raise HTTPException(413, "Файл слишком большой")
+                    f.write(chunk)
+            if await asyncio.to_thread(enhance.video_duration, path) <= 0:
+                path.unlink(missing_ok=True)
+                raise HTTPException(400, "Не получилось прочитать файл")
+            return {"id": upid}
         data = bytearray()
         async for chunk in request.stream():
             data += chunk
@@ -610,6 +705,178 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             raise HTTPException(502, "Telegram не принял видео")
         return {"ok": True}
 
+    @app.post("/clips/{clip_id}/review")
+    def review(clip_id: str, body: ReviewIn, user=Depends(current_user)):
+        """Очередь утверждения: принять или отклонить найденный момент."""
+        if body.status not in ("approved", "rejected", "pending") or not db.review(user["id"], clip_id, body.status):
+            raise HTTPException(404, "Клип не найден")
+        return {"ok": True}
+
+    # ---------- длинные видео: файл, ссылка, встреча, мероприятие ----------
+    def source_dict(r) -> dict:
+        return {"id": r["id"], "kind": r["kind"], "platform": r["platform"], "title": r["title"] or "Видео", "ref": r["ref"] or "",
+                "scenario": r["scenario"], "status": r["status"], "progress": r["progress"] or 0, "duration": r["duration"],
+                "created": r["created"], "clips": r["clips"] or 0, "speakers": json.loads(r["speakers"] or "[]"),
+                "thumb": f"{cfg.public_url}/sources/{r['id']}/thumb" if r["thumb"] else None, "error": r["error"]}
+
+    @app.get("/sources")
+    def sources(user=Depends(current_user)):
+        return [source_dict(r) for r in db.user_sources(user["id"])]
+
+    @app.post("/sources")
+    def create_source(body: SourceIn, user=Depends(current_user)):
+        if body.kind not in CONNECTORS:
+            raise HTTPException(400, "Такой источник пока не поддерживается")
+        if body.scenario != "auto" and body.scenario not in SCENARIOS:
+            raise HTTPException(400, "Неизвестный тип видео")
+        plan = long_video_plan(db.plan_of(user))
+        left = db.hours_left(user["id"], plan)
+        if left is not None and left <= 0:
+            raise HTTPException(402, "Часы обработки закончились. Докупи часы в «Тарифах»")
+        if body.kind == "upload" or (body.kind == "event" and body.upload):
+            ref = body.upload or ""
+            upload_path(user["id"], ref)  # 404, если файла нет
+        elif body.kind in ("url", "event"):
+            if not body.rights:
+                raise HTTPException(400, "Подтверди, что у тебя есть право использовать это видео")
+            try:
+                ref = check_url(body.url or "")
+            except SourceError as e:
+                raise HTTPException(400, str(e))
+        else:  # meeting
+            if body.platform not in meetings.SERVICES or body.platform not in db.integrations(user["id"]):
+                raise HTTPException(400, "Сначала подключи сервис встреч")
+            ref = body.recording or ""
+            if not ref:
+                raise HTTPException(400, "Выбери запись")
+        sid = "s" + hashlib.sha1(f"{user['id']}:{ref}:{time.time()}".encode()).hexdigest()[:10]
+        row = db.add_source(id=sid, user_id=user["id"], kind=body.kind, platform=platform_of(body.kind, ref, body.platform),
+                            title=(body.title or "").strip()[:120] or None, ref=ref, scenario=body.scenario,
+                            status="queued", progress=0.0, created=time.time())
+        on_source()
+        return source_dict(row)
+
+    @app.delete("/sources/{sid}")
+    def delete_source(sid: str, user=Depends(current_user)):
+        if not db.delete_source(user["id"], sid):
+            raise HTTPException(404, "Видео не найдено")
+        return {"ok": True}
+
+    @app.get("/sources/{sid}/thumb")
+    def source_thumb(sid: str, user=Depends(current_user)):
+        r = db.source(sid)
+        if r is None or r["user_id"] != user["id"] or not r["thumb"] or not Path(r["thumb"]).exists():
+            raise HTTPException(404, "Видео не найдено")
+        return FileResponse(r["thumb"])
+
+    # ---------- встречи: Zoom, Google Meet, Microsoft Teams ----------
+    def state_for(uid: int, service: str) -> str:
+        sig = hashlib.sha256(f"{uid}:{service}:{cfg.jwt_secret}".encode()).hexdigest()[:24]
+        return f"{uid}.{service}.{sig}"
+
+    def redirect_for(service: str) -> str:
+        return f"{cfg.public_url}/integrations/{service}/callback"
+
+    def fresh_token(uid: int, service: str) -> str:
+        it = db.integrations(uid).get(service)
+        if it is None:
+            raise HTTPException(400, "Сначала подключи сервис встреч")
+        if it["expires"] and it["expires"] < time.time() + 60 and it["refresh_token"]:
+            try:
+                t = meetings.refresh(meetings.SERVICES[service], it["refresh_token"])
+            except meetings.MeetingError as e:
+                raise HTTPException(401, str(e))
+            db.set_integration(uid, service, it["account"], t["access"], t["refresh"], t["expires"])
+            return t["access"]
+        return it["access_token"]
+
+    @app.get("/integrations")
+    def integrations(user=Depends(current_user)):
+        have = db.integrations(user["id"])
+        return [{"id": s.id, "title": s.title, "connected": s.id in have, "account": have[s.id]["account"] if s.id in have else None,
+                 "available": s.ready} for s in meetings.SERVICES.values()]
+
+    @app.post("/integrations/{service}/connect")
+    def connect(service: str, user=Depends(current_user)):
+        s = meetings.SERVICES.get(service)
+        if s is None:
+            raise HTTPException(404)
+        if not s.ready:
+            raise HTTPException(503, f"Подключение {s.title} ещё не настроено на сервере")
+        return {"url": meetings.auth_url(s, state_for(user["id"], service), redirect_for(service)), "connected": False}
+
+    @app.get("/integrations/{service}/callback", include_in_schema=False)
+    def connect_done(service: str, code: str = "", state: str = ""):
+        s = meetings.SERVICES.get(service)
+        try:
+            uid = int(state.split(".")[0])
+        except ValueError:
+            uid = 0
+        if s is None or not code or state != state_for(uid, service) or db.user(uid) is None:
+            raise HTTPException(400, "Ссылка устарела, подключи сервис ещё раз")
+        try:
+            t = meetings.exchange(s, code, redirect_for(service))
+        except meetings.MeetingError as e:
+            raise HTTPException(400, str(e))
+        db.set_integration(uid, service, None, t["access"], t["refresh"], t["expires"])
+        back = f'<p><a href="{cfg.app_url}">Открыть HypeCut</a></p>' if cfg.app_url else ""
+        return HTMLResponse(f"<meta name=viewport content='width=device-width'><h2>{s.title} подключён</h2>"
+                            f"<p>Вернись в приложение HypeCut: записи уже видны в «Создать клипы».</p>{back}")
+
+    @app.get("/integrations/{service}/recordings")
+    def meeting_recordings(service: str, user=Depends(current_user)):
+        s = meetings.SERVICES.get(service)
+        if s is None:
+            raise HTTPException(404)
+        try:
+            recs = meetings.recordings(s, fresh_token(user["id"], service))
+        except meetings.MeetingError as e:
+            raise HTTPException(400, str(e))
+        except Exception:
+            raise HTTPException(502, f"{s.title} сейчас не отвечает")
+        return [{k: r[k] for k in ("id", "title", "duration", "date", "participants")} for r in recs]
+
+    @app.delete("/integrations/{service}")
+    def disconnect(service: str, user=Depends(current_user)):
+        db.drop_integration(user["id"], service)
+        return {"ok": True}
+
+    # ---------- тарифы и часы обработки ----------
+    @app.get("/pricing")
+    def pricing(store: str = "app"):
+        return pricing_public("web" if store == "web" else "app")
+
+    @app.post("/billing/plan")
+    def choose_plan(body: PlanIn, user=Depends(current_user)):
+        """В магазинах приложений оплата идёт через RevenueCat (/billing/revenuecat). Оплаты картой на сайте пока нет:
+        в тестовом режиме (DEV_LOGIN=1) тариф включается сразу."""
+        p = PLANS.get(body.id)
+        if p is None or p.contact or not p.price_usd:
+            raise HTTPException(400, "Этот тариф так не выбрать")
+        if not cfg.dev_login:
+            raise HTTPException(501, "Оплата картой скоро появится. Пока тариф можно купить в приложении или в боте")
+        db.set_plan(user["id"], p.id, time.time() + (365 if body.period == "year" else 31) * 86400)
+        on_change()
+        return {"ok": True, "url": None}
+
+    @app.post("/billing/hours")
+    def buy_hours(body: HoursIn, user=Depends(current_user)):
+        a = addon(body.id)
+        if a is None:
+            raise HTTPException(400, "Нет такого пакета")
+        if not cfg.dev_login:
+            raise HTTPException(501, "Оплата картой скоро появится. Пока часы можно купить в приложении")
+        db.add_hours(user["id"], a["hours"], a["price_usd"], "dev")
+        return {"ok": True, "url": None}
+
+    @app.post("/billing/quote")
+    def quote(body: QuoteIn, user=Depends(current_user)):
+        text = body.text.strip()
+        if body.kind not in ("business", "event") or len(text) < 3:
+            raise HTTPException(400, "Напиши пару слов о задаче")
+        db.add_quote(user["id"], body.kind, text[:2000])
+        return {"ok": True}
+
     # ---------- оплата (RevenueCat присылает события App Store и Google Play) ----------
     @app.post("/billing/revenuecat")
     async def revenuecat(request: Request, authorization: str | None = Header(None)):
@@ -624,6 +891,12 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             return {"ok": True, "ignored": "unknown user"}
         kind = event.get("type", "")
         ids = " ".join([event.get("product_id") or "", *(event.get("entitlement_ids") or [])]).lower()
+        pack = re.search(r"hours?_?(\d+)", ids)
+        if pack and kind in ("INITIAL_PURCHASE", "NON_RENEWING_PURCHASE"):
+            a = addon(f"h{pack.group(1)}")
+            if a:
+                db.add_hours(uid, a["hours"], a["price_usd"], event.get("id"))
+            return {"ok": True}
         plan = plan_from_product(ids)
         if kind in ("INITIAL_PURCHASE", "RENEWAL", "PRODUCT_CHANGE", "UNCANCELLATION", "NON_RENEWING_PURCHASE") and plan:
             until = (event.get("expiration_at_ms") or 0) / 1000 or time.time() + 31 * 86400
@@ -650,8 +923,24 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         if not ch:
             raise HTTPException(400)
         db.block_channel(ch)
+        # клипы этого канала удаляем с сервера, заявки закрываем
+        removed = 0
+        for c in db.channel_clips(ch):
+            for f in [c["file"], c["thumb"], *[p.name for p in variants.all_files(cfg.clips_dir, c["id"])]]:
+                if f:
+                    (cfg.clips_dir / f).unlink(missing_ok=True)
+            db.delete_clip(c["id"])
+            removed += 1
+        db.x("UPDATE optout_requests SET status='blocked' WHERE channel=? AND status='new'", (ch,))
         on_change()
-        return {"ok": True, "blocked": ch}
+        return {"ok": True, "blocked": ch, "clips_removed": removed}
+
+    @app.get("/admin/requests")
+    def admin_requests(x_admin_token: str | None = Header(None), token: str | None = Query(None)):
+        """Заявки стримеров: проверить, что канал их, и заблокировать через /admin/block."""
+        if not cfg.admin_token or (x_admin_token or token) != cfg.admin_token:
+            raise HTTPException(401)
+        return [dict(r) for r in db.optouts()]
 
     return app
 

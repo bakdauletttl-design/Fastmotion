@@ -110,6 +110,92 @@ CREATE TABLE IF NOT EXISTS ratings (
     created REAL NOT NULL,
     PRIMARY KEY (clip_id, user_id)
 );
+-- ---------- длинные видео: файл, ссылка, встреча, мероприятие ----------
+CREATE TABLE IF NOT EXISTS sources (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,              -- upload | url | meeting | event (live идёт старым путём через воркеры)
+    platform TEXT,                   -- file | youtube | vimeo | link | zoom | meet | teams
+    title TEXT,
+    ref TEXT,                        -- ссылка, id загрузки или id записи встречи
+    scenario TEXT NOT NULL,          -- auto | stream | podcast | interview | lecture | webinar | meeting | event
+    status TEXT NOT NULL,            -- queued | ingest | transcribe | speakers | analyze | detect | generate | done | failed
+    progress REAL DEFAULT 0,         -- 0..1 всего пути
+    duration REAL,                   -- длина видео, секунды
+    file TEXT,                       -- исходник на диске (удаляется через несколько дней)
+    thumb TEXT,
+    speakers TEXT,                   -- JSON-список: кого распознал движок
+    clips INTEGER DEFAULT 0,
+    error TEXT,
+    created REAL NOT NULL,
+    finished REAL
+);
+CREATE TABLE IF NOT EXISTS transcript_segments (
+    source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    start REAL NOT NULL,
+    end REAL NOT NULL,
+    speaker TEXT,
+    text TEXT NOT NULL,
+    words TEXT                       -- JSON [[start, end, word], ...]
+);
+CREATE TABLE IF NOT EXISTS highlights (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    start REAL NOT NULL,
+    end REAL NOT NULL,
+    score INTEGER NOT NULL,          -- 0..100
+    scenario TEXT,
+    reason TEXT,
+    title TEXT,
+    quote TEXT,
+    speaker TEXT,
+    emotion TEXT,
+    signals TEXT,                    -- JSON-список сигналов: цитата, смена спикера, смех...
+    clip_id TEXT                     -- готовый клип
+);
+CREATE TABLE IF NOT EXISTS integrations (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service TEXT NOT NULL,           -- zoom | meet | teams
+    account TEXT,
+    access_token TEXT,
+    refresh_token TEXT,
+    expires REAL,
+    created REAL NOT NULL,
+    PRIMARY KEY (user_id, service)
+);
+CREATE TABLE IF NOT EXISTS hours_used (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    month TEXT NOT NULL,             -- 2026-11
+    hours REAL NOT NULL DEFAULT 0,
+    ai_clips INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, month)
+);
+CREATE TABLE IF NOT EXISTS hour_packs (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hours REAL NOT NULL,             -- докупленные часы, не сгорают в конце месяца
+    left REAL NOT NULL,
+    price_usd REAL,
+    ref TEXT,                        -- id платежа
+    created REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quotes (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,              -- business | event
+    text TEXT NOT NULL,
+    created REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS optout_requests (
+    id INTEGER PRIMARY KEY,
+    channel TEXT NOT NULL,           -- ключ «площадка:имя»
+    contact TEXT NOT NULL,           -- как связаться со стримером для проверки
+    text TEXT,
+    status TEXT NOT NULL DEFAULT 'new',  -- new | blocked | rejected
+    created REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sources_user ON sources(user_id, created);
+CREATE INDEX IF NOT EXISTS segments_source ON transcript_segments(source_id, start);
 CREATE INDEX IF NOT EXISTS follows_channel ON follows(channel);
 CREATE INDEX IF NOT EXISTS deliveries_user ON deliveries(user_id, created);
 """
@@ -134,14 +220,17 @@ class DB:
 
     def _migrate(self) -> None:
         """Добавляет новые колонки в старую базу, чтобы обновление сервера не теряло данные."""
-        for table, cols in (("clips", ("title", "transcript", "words", "height", "trim_start", "trim_end")),
+        types = {"trim_start": "REAL DEFAULT 0", "trim_end": "REAL DEFAULT 0", "height": "INTEGER",
+                 "fav": "INTEGER DEFAULT 0", "score": "INTEGER", "stream_at": "REAL"}
+        for table, cols in (("clips", ("title", "transcript", "words", "height", "trim_start", "trim_end",
+                                       # клипы из длинных видео: откуда и почему AI выбрал момент
+                                       "source_id", "highlight_id", "scenario", "score", "status", "speaker",
+                                       "quote", "emotion", "signals", "stream_at", "cam")),
                             ("users", ("lang",)), ("deliveries", ("fav",))):
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col in cols:
                 if col not in have:
-                    kind = "REAL DEFAULT 0" if col.startswith("trim") else "INTEGER" if col == "height" \
-                        else "INTEGER DEFAULT 0" if col == "fav" else "TEXT"
-                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {types.get(col, 'TEXT')}")
 
     def q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self.lock:
@@ -364,7 +453,7 @@ class DB:
         now = now or time.time()
         one = lambda sql, *a: self.one(sql, (uid, *a))["n"]
         base = "SELECT COUNT(*) n FROM deliveries d JOIN clips c ON c.id=d.clip_id WHERE d.user_id=?"
-        return {"channels": len(self.follows(uid)),
+        return {**self.hours(uid, now), "channels": len(self.follows(uid)),
                 "clips_today": one(base + " AND d.created>=?", now - 86400),
                 "clips_month": one(base + " AND d.created>=?", now - 30 * 86400),
                 "my_clips_month": one(base + " AND c.kind='user' AND d.created>=?", now - 30 * 86400),
@@ -383,3 +472,111 @@ class DB:
 
     def delete_clip(self, clip_id: str) -> None:
         self.x("DELETE FROM clips WHERE id=?", (clip_id,))
+
+    # ---------- длинные видео ----------
+    def add_source(self, **x) -> sqlite3.Row:
+        self.x(f"INSERT INTO sources ({','.join(x)}) VALUES ({','.join('?' * len(x))})", tuple(x.values()))
+        return self.source(x["id"])
+
+    def source(self, sid: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM sources WHERE id=?", (sid,))
+
+    def set_source(self, sid: str, **fields) -> None:
+        sets = ",".join(f"{k}=?" for k in fields)
+        self.x(f"UPDATE sources SET {sets} WHERE id=?", (*fields.values(), sid))
+
+    def user_sources(self, uid: int, limit: int = 30) -> list[sqlite3.Row]:
+        return self.q("SELECT * FROM sources WHERE user_id=? ORDER BY created DESC LIMIT ?", (uid, limit))
+
+    def next_source(self) -> sqlite3.Row | None:
+        """Следующее видео в очередь: сначала у кого тариф с приоритетом, потом по времени."""
+        now = time.time()
+        rows = self.q("SELECT s.*, u.plan, u.plan_until, u.trial_until FROM sources s JOIN users u ON u.id=s.user_id "
+                      "WHERE s.status='queued' ORDER BY s.created")
+        if not rows:
+            return None
+        prio = lambda r: not (effective_plan(r["plan"], r["plan_until"], r["trial_until"], now) or Plan("x", "", 0, 0, 0, False, False)).priority  # noqa: E731
+        return sorted(rows, key=lambda r: (prio(r), r["created"]))[0]
+
+    def delete_source(self, uid: int, sid: str) -> bool:
+        before = self.one("SELECT 1 FROM sources WHERE id=? AND user_id=?", (sid, uid))
+        self.x("DELETE FROM sources WHERE id=? AND user_id=?", (sid, uid))
+        return before is not None
+
+    def add_segments(self, sid: str, segs: list[tuple]) -> None:
+        with self.lock:
+            self.conn.executemany("INSERT INTO transcript_segments VALUES (?,?,?,?,?,?)", [(sid, *s) for s in segs])
+
+    def add_highlight(self, **h) -> None:
+        self.x(f"INSERT INTO highlights ({','.join(h)}) VALUES ({','.join('?' * len(h))})", tuple(h.values()))
+
+    def review(self, uid: int, clip_id: str, status: str) -> bool:
+        if not self.has_clip(uid, clip_id):
+            return False
+        self.x("UPDATE clips SET status=? WHERE id=?", (status, clip_id))
+        return True
+
+    # ---------- часы обработки ----------
+    @staticmethod
+    def month(now: float | None = None) -> str:
+        return time.strftime("%Y-%m", time.gmtime(now or time.time()))
+
+    def hours(self, uid: int, now: float | None = None) -> dict:
+        r = self.one("SELECT hours, ai_clips FROM hours_used WHERE user_id=? AND month=?", (uid, self.month(now)))
+        extra = self.one("SELECT COALESCE(SUM(left), 0) n FROM hour_packs WHERE user_id=?", (uid,))["n"]
+        return {"hours_used": round(r["hours"], 2) if r else 0.0, "ai_clips_used": r["ai_clips"] if r else 0,
+                "hours_extra": round(extra, 2)}
+
+    def hours_left(self, uid: int, plan: Plan, now: float | None = None) -> float | None:
+        """Сколько часов ещё можно обработать: остаток тарифа + докупленные. None = без лимита."""
+        if plan.hours is None:
+            return None
+        h = self.hours(uid, now)
+        return max(0.0, plan.hours - h["hours_used"]) + h["hours_extra"]
+
+    def spend_hours(self, uid: int, plan: Plan, hours: float, clips: int = 0, now: float | None = None) -> None:
+        """Списывает часы: сначала из тарифа, остаток — из докупленных пакетов (старые первыми)."""
+        m = self.month(now)
+        with self.lock:
+            used = self.hours(uid, now)["hours_used"]
+            from_plan = hours if plan.hours is None else max(0.0, min(hours, plan.hours - used))
+            self.x("INSERT INTO hours_used (user_id, month, hours, ai_clips) VALUES (?,?,?,?) "
+                   "ON CONFLICT(user_id, month) DO UPDATE SET hours=hours+excluded.hours, ai_clips=ai_clips+excluded.ai_clips",
+                   (uid, m, hours, clips))
+            rest = hours - from_plan
+            for pack in self.q("SELECT id, left FROM hour_packs WHERE user_id=? AND left>0 ORDER BY created", (uid,)):
+                if rest <= 0:
+                    break
+                take = min(rest, pack["left"])
+                self.x("UPDATE hour_packs SET left=left-? WHERE id=?", (take, pack["id"]))
+                rest -= take
+
+    def add_hours(self, uid: int, hours: float, price_usd: float | None, ref: str | None) -> None:
+        self.x("INSERT INTO hour_packs (user_id, hours, left, price_usd, ref, created) VALUES (?,?,?,?,?,?)",
+               (uid, hours, hours, price_usd, ref, time.time()))
+
+    # ---------- встречи: подключённые Zoom / Meet / Teams ----------
+    def integrations(self, uid: int) -> dict[str, sqlite3.Row]:
+        return {r["service"]: r for r in self.q("SELECT * FROM integrations WHERE user_id=?", (uid,))}
+
+    def set_integration(self, uid: int, service: str, account: str | None, access: str, refresh: str | None,
+                        expires: float | None) -> None:
+        self.x("INSERT OR REPLACE INTO integrations VALUES (?,?,?,?,?,?,?)",
+               (uid, service, account, access, refresh, expires, time.time()))
+
+    def drop_integration(self, uid: int, service: str) -> None:
+        self.x("DELETE FROM integrations WHERE user_id=? AND service=?", (uid, service))
+
+    def add_quote(self, uid: int, kind: str, text: str) -> None:
+        self.x("INSERT INTO quotes (user_id, kind, text, created) VALUES (?,?,?,?)", (uid, kind, text, time.time()))
+
+    # ---------- стримеры: заявки «не нарезайте мой канал» ----------
+    def add_optout(self, channel: str, contact: str, text: str) -> int:
+        return self.x("INSERT INTO optout_requests (channel, contact, text, created) VALUES (?,?,?,?)",
+                      (channel, contact, text, time.time()))
+
+    def optouts(self, status: str = "new") -> list[sqlite3.Row]:
+        return self.q("SELECT * FROM optout_requests WHERE status=? ORDER BY created", (status,))
+
+    def channel_clips(self, channel: str) -> list[sqlite3.Row]:
+        return self.q("SELECT * FROM clips WHERE channel=?", (channel,))

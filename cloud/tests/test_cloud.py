@@ -89,7 +89,7 @@ def test_effective_plan():
     assert can_receive(PLANS["trial"], 4) and not can_receive(PLANS["trial"], 5)
     assert can_receive(PLANS["pro"], 49) and not can_receive(PLANS["pro"], 50)
     assert effective_plan("max", now + 10, None, now).height == 1440
-    assert [PLANS[p].channels for p in ("standard", "pro", "max")] == [3, 5, 10]
+    assert [PLANS[p].channels for p in ("standard", "pro", "max")] == [3, 3, 10]  # Pro по новой сетке (pricing.json)
     assert [PLANS[p].clips_per_stream for p in ("standard", "pro", "max")] == [20, 50, 100]
     from hypecut_cloud.plans import plan_from_product
     assert plan_from_product("hypecut_max_monthly") == "max" and plan_from_product("x") is None

@@ -96,6 +96,32 @@ t.me/HypeCutBot?start=<одноразовый код> ──► бот связ�
 Цифры для владельца (пользователи, оплаты, клипы, оценки 👍/👎) открываются в браузере:
 `https://ваш-домен/admin/stats?token=<ADMIN_TOKEN>`.
 
+## Длинные видео: файл, ссылка, встречи, мероприятия
+
+Кроме живых эфиров, HypeCut режет любое длинное видео: загрузку с телефона, ссылку (YouTube, Vimeo, Rutube, VK,
+Dropbox или прямой .mp4), запись встречи из Zoom / Google Meet / Microsoft Teams и запись конференции.
+Код лежит в `hypecut_cloud/pipeline/`: адаптер на каждый источник (`connectors.py`), дальше общий путь:
+речь → спикеры → цитаты, эмоции, мысли → границы и оценка → клипы в общей очереди. Живые стримы идут старым путём.
+
+Необязательные ключи в `.env`:
+
+| Переменная | Зачем |
+| --- | --- |
+| `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET` | кнопка «Подключить Zoom» (приложение в marketplace.zoom.us) |
+| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Google Meet: записи из Google Диска |
+| `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Microsoft Teams: записи из OneDrive |
+| `HF_TOKEN` | разделение речи по спикерам (нужен пакет pyannote.audio) |
+| `ALLOWED_URL_HOSTS` | с каких сайтов можно присылать ссылки |
+| `MAX_JOBS` | сколько длинных видео обрабатывать одновременно (по умолчанию 1) |
+| `HYPECUT_PRICING` | путь к своему файлу тарифов вместо `hypecut_cloud/pricing.json` |
+
+Адрес для входа в Zoom / Google / Microsoft: `https://ваш-домен/integrations/<zoom|meet|teams>/callback`.
+
+## Тарифы
+
+Цены, часы обработки, AI-клипы и тексты возможностей лежат в `hypecut_cloud/pricing.json`. Поменял файл, перезапустил
+сервер, и приложение показывает новые тарифы без обновления. Цены пока предварительные.
+
 ## Оплата
 
 Подписки продаются в App Store и Google Play через [RevenueCat](https://www.revenuecat.com) (бесплатно до $2.5k дохода в месяц).
