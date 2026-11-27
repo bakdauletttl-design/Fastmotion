@@ -44,6 +44,9 @@ class DevIn(BaseModel):
 
 EN = {
     "Нужны и начало, и конец отрывка": "Both the start and the end of the clip are needed",
+    "До нажатия можно 10, 20 или 30 секунд": "Before the press can be 10, 20 or 30 seconds",
+    "После нажатия можно 0, 10 или 20 секунд": "After the press can be 0, 10 or 20 seconds",
+    "Канал не найден": "Channel not found",
     "Начало отрывка должно быть раньше конца": "The clip start must be before its end",
     "Подожди пару секунд перед следующим клипом": "Wait a couple of seconds before the next clip",
     "На этом тарифе больше каналов нельзя": "Your plan does not allow more channels",
@@ -95,8 +98,20 @@ class CutIn(BaseModel):
     behind: float = Field(0, allow_inf_nan=False)
     start_ago: float | None = Field(None, ge=0, allow_inf_nan=False)
     end_ago: float | None = Field(None, ge=0, allow_inf_nan=False)
+    # 3) запас вокруг нажатия: before секунд до и after секунд после (без них берётся настройка человека)
+    before: float | None = Field(None, ge=0, le=600, allow_inf_nan=False)
+    after: float | None = Field(None, ge=0, le=600, allow_inf_nan=False)
 
 
+class ClipTimingIn(BaseModel):
+    before: float = Field(allow_inf_nan=False)
+    after: float = Field(allow_inf_nan=False)
+    channel: str | None = None  # своя настройка для одного канала; без него — для всех каналов
+
+
+# «Клип» по умолчанию: 20 с до нажатия (человек жмёт, когда момент уже случился) и 10 с после
+CLIP_BEFORE_DEFAULT, CLIP_AFTER_DEFAULT = 20.0, 10.0
+CLIP_BEFORE_CHOICES, CLIP_AFTER_CHOICES = (10.0, 20.0, 30.0), (0.0, 10.0, 20.0)
 MIN_CUT_SECONDS = 3.0   # короче отрывок не режем: в нём почти ничего нет
 CUT_SLACK = 1.0         # погрешность времени между плеером и сервером, на неё не ругаемся
 
@@ -268,7 +283,30 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             "bot_username": cfg.bot_username,
             "channels": channels_of(user["id"]),
             "usage": db.usage(user["id"]),
+            "clip_timing": clip_timing_dict(user["id"]),
         }
+
+    def cut_limit(plan) -> float:
+        """Самый длинный клип по кнопке: лимит тарифа, но не больше памяти эфира."""
+        return max(MIN_CUT_SECONDS, min(float(plan.max_seconds), cfg.buffer_seconds - 20.0))
+
+    def clip_timing(uid: int, channel: str | None = None) -> tuple[float, float]:
+        before, after = db.clip_timing(uid, channel)
+        return (CLIP_BEFORE_DEFAULT if before is None else float(before),
+                CLIP_AFTER_DEFAULT if after is None else float(after))
+
+    def clip_timing_dict(uid: int, channel: str | None = None) -> dict:
+        before, after = clip_timing(uid, channel)
+        return {"before": before, "after": after,
+                "before_choices": list(CLIP_BEFORE_CHOICES), "after_choices": list(CLIP_AFTER_CHOICES)}
+
+    def fit_timing(before: float, after: float, max_len: float) -> tuple[float, float]:
+        """Тариф позволяет меньше, чем выбрано: сначала укорачиваем «до», потом «после»."""
+        if before + after > max_len:
+            before = max(MIN_CUT_SECONDS, max_len - after)
+        if before + after > max_len:
+            after = max(0.0, max_len - before)
+        return before, after
 
     def channels_of(uid: int) -> list[dict]:
         out = []
@@ -497,6 +535,21 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         return (request.headers.get("authorization") or "").removeprefix("Bearer ").strip() or \
             request.query_params.get("token", "")
 
+    @app.put("/me/clip-timing")
+    def set_clip_timing(body: ClipTimingIn, user=Depends(current_user)):
+        """Сколько секунд до и после нажатия «Клип» брать: для всех каналов или для одного."""
+        if body.before not in CLIP_BEFORE_CHOICES:
+            raise HTTPException(400, "До нажатия можно 10, 20 или 30 секунд")
+        if body.after not in CLIP_AFTER_CHOICES:
+            raise HTTPException(400, "После нажатия можно 0, 10 или 20 секунд")
+        max_len = cut_limit(db.plan_of(user) or PLANS["trial"])
+        if body.before + body.after > max_len:
+            raise HTTPException(400, f"На твоём тарифе клип по кнопке до {max_len:g} с: выбери меньше")
+        if body.channel and body.channel not in db.follows(user["id"]):
+            raise HTTPException(404, "Канал не найден")
+        db.set_clip_timing(user["id"], body.before, body.after, body.channel)
+        return clip_timing_dict(user["id"], body.channel)
+
     @app.get("/live/{key}")
     def live_info(key: str, request: Request, user=Depends(current_user)):
         """Можно ли смотреть эфир прямо в приложении и сколько секунд назад можно вырезать."""
@@ -506,6 +559,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         edge, oldest = (w.live_edge(), w.buffer_start()) if on_air else (None, None)
         return {"live": on_air, "max_seconds": max(10, min(plan.max_seconds, cfg.buffer_seconds - 20)),
                 "min_seconds": MIN_CUT_SECONDS,
+                "clip_timing": clip_timing_dict(user["id"], key),  # запас кнопки «Клип» для этого канала
                 # на сколько секунд назад можно начать свой отрывок (start_ago не больше этого)
                 "buffer_seconds": round(edge - oldest, 1) if edge is not None and oldest is not None else 0,
                 "playlist": f"{media_base()}/live/{key}/index.m3u8?token={raw_token(request)}" if on_air else None,
@@ -543,7 +597,7 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
         с началом и концом (start_ago/end_ago, секунды назад от самого свежего момента эфира)."""
         w = watchable(key, user)
         plan = db.plan_of(user) or PLANS["trial"]
-        max_len = max(MIN_CUT_SECONDS, min(float(plan.max_seconds), cfg.buffer_seconds - 20.0))
+        max_len = cut_limit(plan)
         edge, oldest = w.live_edge(), w.buffer_start()
         available = max(0.0, edge - oldest) if edge is not None and oldest is not None else 0.0
         if body.start_ago is not None or body.end_ago is not None:
@@ -564,7 +618,19 @@ def create_app(cfg: Config, db: DB, on_change: Callable[[], None] = lambda: None
             start_ago = min(start_ago, available)
             if start_ago - end_ago > max_len:
                 start_ago = end_ago + max_len
+        elif "seconds" not in body.model_fields_set:
+            # кнопка «Клип»: before секунд до нажатия и after секунд после (по умолчанию 20 + 10)
+            before, after = clip_timing(user["id"], key)
+            before = before if body.before is None else float(body.before)
+            after = after if body.after is None else float(body.after)
+            before, after = fit_timing(before, after, max_len)
+            pressed_ago = max(0.0, min(float(body.behind), available))  # что человек видел в момент нажатия
+            start_ago = min(pressed_ago + before, available)
+            end_ago = pressed_ago - after  # меньше нуля: этих секунд эфира ещё нет, сервер их дождётся
+            if start_ago - end_ago < MIN_CUT_SECONDS:
+                start_ago = end_ago + MIN_CUT_SECONDS
         else:
+            # старое приложение: seconds секунд до нажатия
             seconds = max(MIN_CUT_SECONDS, min(float(body.seconds), max_len))
             end_ago = max(0.0, min(float(body.behind), available - seconds))
             start_ago = min(end_ago + seconds, max(available, end_ago + MIN_CUT_SECONDS))

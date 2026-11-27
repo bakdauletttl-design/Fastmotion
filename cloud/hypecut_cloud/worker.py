@@ -267,14 +267,15 @@ class ChannelWorker:
         return await self.cut_range(user_id, behind + seconds, behind)
 
     async def cut_range(self, user_id: int, start_ago: float, end_ago: float) -> str | None:
-        """Отрывок, который человек выбрал сам: с start_ago до end_ago секунд назад от самого свежего куска.
+        """Отрывок с start_ago до end_ago секунд назад от самого свежего куска.
+        end_ago меньше нуля — конец ещё впереди (запас «после нажатия»): make_clip дождётся этих секунд эфира.
         Проверку границ делает API, здесь только перевод в unix time."""
         edge = self.live_edge()
-        if edge is None or not start_ago > end_ago >= 0:
+        if edge is None or not start_ago > end_ago:
             return None
         start, end = edge - start_ago, edge - end_ago
-        # самый яркий момент обычно за пару секунд до конца: туда и наезд камеры
-        trig = Trigger(at=max(start, end - 3), reason="твой клип", score=0, kind="user")
+        # самый яркий момент обычно за пару секунд до нажатия (или до конца, если «после» нет): туда и наезд камеры
+        trig = Trigger(at=max(start, min(end, edge) - 3), reason="твой клип", score=0, kind="user")
         return await self.make_clip(trig, window=(start, end), only_user=user_id)
 
     async def make_clip(self, trig: Trigger, window: tuple[float, float] | None = None,

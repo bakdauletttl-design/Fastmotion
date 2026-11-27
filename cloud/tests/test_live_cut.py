@@ -212,3 +212,80 @@ def test_failed_render_leaves_no_file(tmp_path, monkeypatch):
             "words": "[]", "title": None, "moment": 2}
     assert variants.path_for(tmp_path, clip, variants.Want(720, False, True)) is None
     assert list(tmp_path.iterdir()) == [tmp_path / "c2.mp4"]
+
+
+# ---------- запас до и после нажатия «Клип» ----------
+
+def capture_cut(w):
+    calls = []
+
+    async def fake(uid, start_ago, end_ago):
+        calls.append((round(start_ago, 2), round(end_ago, 2)))
+        return None  # клип не нужен, проверяем только границы
+    w.cut_range = fake
+    return calls
+
+
+def test_clip_button_default_20_before_10_after(live_env):
+    cfg, db, client, h, w = live_env
+    calls = capture_cut(w)
+    client.post(f"/live/{KEY}/clip", headers=h, json={})
+    assert calls[-1] == (20, -10)  # 20 с до нажатия и 10 с после (их сервер дождётся)
+    # плеер отстаёт на 3 с: всё сдвигается на 3 с назад
+    time.sleep(3.1)
+    client.post(f"/live/{KEY}/clip", headers=h, json={"behind": 3})
+    assert calls[-1] == (23, -7)
+    me = client.get("/me", headers=h).json()["clip_timing"]
+    assert me["before"] == 20 and me["after"] == 10 and me["before_choices"] == [10, 20, 30]
+
+
+def test_clip_timing_setting_and_per_channel(live_env):
+    cfg, db, client, h, w = live_env
+    calls = capture_cut(w)
+    assert client.put("/me/clip-timing", headers=h, json={"before": 15, "after": 10}).status_code == 400
+    assert client.put("/me/clip-timing", headers=h, json={"before": 10, "after": 5}).status_code == 400
+    assert client.put("/me/clip-timing", headers=h, json={"before": 10, "after": 0, "channel": "twitch:nobody"}).status_code == 404
+    r = client.put("/me/clip-timing", headers=h, json={"before": 10, "after": 0})
+    assert r.status_code == 200 and r.json()["before"] == 10 and r.json()["after"] == 0
+    client.post(f"/live/{KEY}/clip", headers=h, json={})
+    assert calls[-1] == (10, 0)
+    # своя настройка для канала важнее общей
+    r = client.put("/me/clip-timing", headers=h, json={"before": 30, "after": 20, "channel": KEY})
+    assert r.status_code == 200
+    assert client.get(f"/live/{KEY}", headers=h).json()["clip_timing"]["after"] == 20
+    assert client.get("/me", headers=h).json()["clip_timing"]["before"] == 10
+    time.sleep(3.1)
+    client.post(f"/live/{KEY}/clip", headers=h, json={})
+    assert calls[-1] == (min(30, w.live_edge() - w.buffer_start()), -20)
+    # разовые before/after в запросе важнее настройки
+    time.sleep(3.1)
+    client.post(f"/live/{KEY}/clip", headers=h, json={"before": 10, "after": 10})
+    assert calls[-1] == (10, -10)
+
+
+def test_clip_timing_respects_plan(live_env):
+    cfg, db, client, h, w = live_env
+    calls = capture_cut(w)
+    uid = db.user(1)["id"]
+    assert client.put("/me/clip-timing", headers=h, json={"before": 30, "after": 20}).status_code == 200  # Standard: до 60 с
+    db.set_plan(uid, "trial", time.time() + 86400)  # тариф стал меньше: до 30 с
+    db.x("UPDATE users SET plan=NULL WHERE id=?", (uid,))
+    r = client.put("/me/clip-timing", headers=h, json={"before": 30, "after": 10})
+    assert r.status_code == 400 and "до 30 с" in r.json()["detail"]
+    client.post(f"/live/{KEY}/clip", headers=h, json={})
+    assert calls[-1] == (10, -20)  # сохранённые 30 + 20 ужались до 30 с: «до» укоротилось
+
+
+def test_after_press_waits_for_stream(live_env, monkeypatch):
+    """«После нажатия» ещё нет в эфире: сервер ждёт эти секунды, прежде чем резать."""
+    from hypecut_cloud import worker as worker_mod
+    cfg, db, client, h, w = live_env
+    waits = []
+
+    async def fake_sleep(sec):
+        waits.append(sec)
+    monkeypatch.setattr(worker_mod.asyncio, "sleep", fake_sleep)
+    shift = time.time() - w.live_edge()  # эфир «прямо сейчас»: самый свежий кусок только что дописан
+    w.recorder = FakeRecorder([Segment(x.path, x.start + shift, x.end + shift) for x in w.recorder.segments])
+    asyncio.run(w.cut_range(1, 8, -10))
+    assert waits and 10.5 <= waits[0] <= 11.1  # 10 с «после» + 1 с запаса на дописывание куска

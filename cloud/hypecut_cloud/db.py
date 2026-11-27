@@ -221,16 +221,42 @@ class DB:
     def _migrate(self) -> None:
         """Добавляет новые колонки в старую базу, чтобы обновление сервера не теряло данные."""
         types = {"trim_start": "REAL DEFAULT 0", "trim_end": "REAL DEFAULT 0", "height": "INTEGER",
-                 "fav": "INTEGER DEFAULT 0", "score": "INTEGER", "stream_at": "REAL"}
+                 "fav": "INTEGER DEFAULT 0", "score": "INTEGER", "stream_at": "REAL",
+                 "clip_before": "REAL", "clip_after": "REAL"}
         for table, cols in (("clips", ("title", "transcript", "words", "height", "trim_start", "trim_end",
                                        # клипы из длинных видео: откуда и почему AI выбрал момент
                                        "source_id", "highlight_id", "scenario", "score", "status", "speaker",
                                        "quote", "emotion", "signals", "stream_at", "cam")),
-                            ("users", ("lang",)), ("deliveries", ("fav",))):
+                            ("users", ("lang", "clip_before", "clip_after")), ("deliveries", ("fav",)),
+                            # запас клипа по кнопке «Клип»: секунды до и после нажатия (у канала своя настройка)
+                            ("follows", ("clip_before", "clip_after"))):
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col in cols:
                 if col not in have:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {types.get(col, 'TEXT')}")
+
+    def clip_timing(self, user_id: int, channel: str | None = None) -> tuple[float | None, float | None]:
+        """Сколько секунд до и после нажатия «Клип» берёт этот человек: настройка канала, иначе общая. None = по умолчанию."""
+        row = self.one("SELECT clip_before, clip_after FROM users WHERE id=?", (user_id,))
+        before, after = (row["clip_before"], row["clip_after"]) if row else (None, None)
+        if channel:
+            f = self.one("SELECT clip_before, clip_after FROM follows WHERE user_id=? AND channel=?", (user_id, channel))
+            if f:
+                before = f["clip_before"] if f["clip_before"] is not None else before
+                after = f["clip_after"] if f["clip_after"] is not None else after
+        return before, after
+
+    def set_clip_timing(self, user_id: int, before: float | None, after: float | None, channel: str | None = None) -> bool:
+        if channel:
+            with self.lock:
+                cur = self.conn.execute("UPDATE follows SET clip_before=?, clip_after=? WHERE user_id=? AND channel=?",
+                                        (before, after, user_id, channel))
+                self.conn.commit()
+            return cur.rowcount > 0
+        with self.lock:
+            self.conn.execute("UPDATE users SET clip_before=?, clip_after=? WHERE id=?", (before, after, user_id))
+            self.conn.commit()
+        return True
 
     def q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self.lock:
@@ -365,7 +391,7 @@ class DB:
             if old and old["id"] != uid:
                 self.x("UPDATE users SET telegram_chat_id=NULL WHERE id=?", (old["id"],))
                 if old["provider"] == "telegram":
-                    self.x("INSERT OR IGNORE INTO follows SELECT ?, channel, created FROM follows "
+                    self.x("INSERT OR IGNORE INTO follows (user_id, channel, created) SELECT ?, channel, created FROM follows "
                            "WHERE user_id=?", (uid, old["id"]))
                     self.delete_user(old["id"])
             self.x("UPDATE users SET telegram_chat_id=NULL WHERE id=?", (uid,))
@@ -390,7 +416,7 @@ class DB:
             return "exists"
         if len(current) >= plan.channels:
             return "limit"
-        self.x("INSERT INTO follows VALUES (?,?,?)", (uid, channel, time.time()))
+        self.x("INSERT INTO follows (user_id, channel, created) VALUES (?,?,?)", (uid, channel, time.time()))
         return "ok"
 
     def unfollow(self, uid: int, channel: str) -> bool:
