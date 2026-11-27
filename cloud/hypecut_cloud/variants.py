@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,21 +73,47 @@ def moment_for(clip, long: bool) -> float | None:
     return round(clip["moment"] - (0 if long else (clip["trim_start"] or 0)), 1)
 
 
+_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(out: Path) -> threading.Lock:
+    """Один замок на каждый файл версии: два запроса не делают один и тот же файл одновременно."""
+    with _locks_guard:
+        return _locks.setdefault(str(out), threading.Lock())
+
+
 def path_for(clips_dir: Path, clip, w: Want) -> Path | None:
-    """Готовый файл нужной версии; делает его, если ещё нет. None, если исходник уже удалён."""
-    if w.watermark:
-        out = clips_dir / name_for(clip["id"], w)
-        if out.exists():
+    """Готовый файл нужной версии; делает его, если ещё нет. None, если исходник уже удалён.
+
+    Файл сначала пишется во временный и только готовым переименовывается в настоящее имя.
+    Раньше плеер браузера (он шлёт несколько запросов сразу) и отправка в Telegram запускали
+    ffmpeg одновременно в один и тот же файл, и получалось битое видео: «ошибка воспроизведения»."""
+    out = clips_dir / name_for(clip["id"], w)
+    if out.exists():
+        return out
+    with _lock_for(out):
+        if out.exists():  # пока ждали замок, файл сделал другой запрос
             return out
+        tmp = clips_dir / f".tmp_{uuid.uuid4().hex[:8]}_{out.name}"
+        try:
+            made = _render(clips_dir, clip, w, tmp)
+            if made is None or not made.exists() or made.stat().st_size == 0:
+                return None
+            os.replace(made, out)
+            return out
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
+def _render(clips_dir: Path, clip, w: Want, out: Path) -> Path | None:
+    if w.watermark:
         base = path_for(clips_dir, clip, Want(w.height, w.long, w.vertical))
         if base is None:
             return None
         shutil.copyfile(base, out)
         return add_watermark(out)
     src = clips_dir / clip["file"]
-    out = clips_dir / name_for(clip["id"], w)
-    if out.exists():
-        return out
     if not src.exists():
         return None
     ss, t = lengths(clip, w.long)

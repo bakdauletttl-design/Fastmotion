@@ -255,15 +255,25 @@ class ChannelWorker:
         segs = self.recorder.segments
         return segs[-1].end if self.recorder.live and segs else None
 
+    def buffer_start(self) -> float | None:
+        """Начало самого старого куска в буфере: раньше этого момента вырезать уже нельзя."""
+        segs = self.recorder.segments
+        return segs[0].start if self.recorder.live and segs else None
+
     async def cut_now(self, user_id: int, seconds: float, behind: float = 0.0) -> str | None:
         """Кнопка «Клип» в приложении: последние seconds секунд того, что человек сейчас видит в плеере.
         behind: на сколько секунд плеер отстаёт от самого свежего куска."""
+        behind = max(0.0, behind)
+        return await self.cut_range(user_id, behind + seconds, behind)
+
+    async def cut_range(self, user_id: int, start_ago: float, end_ago: float) -> str | None:
+        """Отрывок, который человек выбрал сам: с start_ago до end_ago секунд назад от самого свежего куска.
+        Проверку границ делает API, здесь только перевод в unix time."""
         edge = self.live_edge()
-        if edge is None:
+        if edge is None or not start_ago > end_ago >= 0:
             return None
-        end = edge - max(0.0, behind)
-        start = end - seconds
-        # самый яркий момент обычно за пару секунд до нажатия: туда и наезд камеры
+        start, end = edge - start_ago, edge - end_ago
+        # самый яркий момент обычно за пару секунд до конца: туда и наезд камеры
         trig = Trigger(at=max(start, end - 3), reason="твой клип", score=0, kind="user")
         return await self.make_clip(trig, window=(start, end), only_user=user_id)
 
@@ -285,8 +295,9 @@ class ChannelWorker:
         while self.db.clip(clip_id):
             clip_id, n = f"{base}_{n}", n + 1
         out = cfg.clips_dir / f"{clip_id}.mp4"
+        built: dict = {}
         try:
-            await build_clip(segments, start, end, out)
+            await build_clip(segments, start, end, out, info=built)
         except Exception:
             log.exception("Не удалось собрать клип %s", clip_id)
             return None
@@ -298,7 +309,8 @@ class ChannelWorker:
         transcript = " ".join(w.text for w in words)
         title = await asyncio.to_thread(enhance.make_title, self.source.name.lstrip("@"), transcript,
                                         chat, trig.reason)
-        real_start = max(start, segments[0].start)
+        # настоящее начало: клип начинается с ключевого кадра, это может быть на 1–2 с раньше start
+        real_start = built.get("start", max(start, segments[0].start))
         duration = round(end - real_start, 1)
         # обычная версия короче длинной: столько отрезать в начале и в конце
         long = need.long and not window
@@ -369,6 +381,9 @@ class Manager:
         old = time.time() - self.cfg.clip_keep_days * 86400
         for f in [*(self.cfg.clips_dir / "highlights").glob("hl_*.mp4"), *(self.cfg.clips_dir / "uploads").glob("u*")]:
             if f.stat().st_mtime < old:
+                f.unlink(missing_ok=True)
+        for f in self.cfg.clips_dir.glob(".tmp_*"):  # недоделанные версии клипов (сервер выключили посреди сборки)
+            if f.stat().st_mtime < time.time() - 3600:
                 f.unlink(missing_ok=True)
         return removed
 
